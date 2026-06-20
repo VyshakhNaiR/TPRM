@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Cpu, Users, LogOut, Save, Check, Loader2, KeyRound, Server, Cloud, GitMerge } from "lucide-react";
+import { Cpu, Users, LogOut, Save, Check, Loader2, KeyRound, Server, Cloud, GitMerge, ScrollText, UserPlus } from "lucide-react";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -27,11 +27,14 @@ export default function Admin() {
   const [masked, setMasked] = useState<any>(null);
   const [canManage, setCanManage] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
-  const [tab, setTab] = useState<"processing" | "users">("processing");
+  const [tab, setTab] = useState<"processing" | "users" | "audit">("processing");
   const [draft, setDraft] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [evalData, setEvalData] = useState<any>(null);
+  const [auditEntries, setAuditEntries] = useState<any[]>([]);
+  const [invite, setInvite] = useState({ company: "", email: "" });
+  const [inviteLink, setInviteLink] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -50,8 +53,19 @@ export default function Admin() {
       });
       setUsers((await (await fetch("/api/users")).json()).users);
       try { const e = await fetch("/api/eval"); if (e.ok) setEvalData(await e.json()); } catch {}
+      try { const a = await fetch("/api/audit"); if (a.ok) setAuditEntries((await a.json()).entries); } catch {}
     })();
   }, [router]);
+
+  async function createInvite() {
+    if (!invite.company || !invite.email) return;
+    const res = await fetch("/api/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(invite) });
+    if (res.ok) {
+      const d = await res.json();
+      setInviteLink(`${window.location.origin}${d.link}`);
+      setInvite({ company: "", email: "" });
+    }
+  }
 
   function patch(p: any) { setDraft((d: any) => ({ ...d, ...p })); }
   function patchIntegrated(prov: string, field: string, val: string) {
@@ -88,6 +102,7 @@ export default function Admin() {
       <div className="mb-5 flex gap-2">
         <button onClick={() => setTab("processing")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "processing" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Cpu size={15} /> Processing engine</button>
         <button onClick={() => setTab("users")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "users" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Users size={15} /> Users & roles</button>
+        <button onClick={() => setTab("audit")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "audit" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><ScrollText size={15} /> Audit log</button>
       </div>
 
       {tab === "processing" && (
@@ -205,6 +220,23 @@ export default function Admin() {
         </section>
       )}
 
+      {tab === "users" && canManage && (
+        <section className="glass mb-4 rounded-2xl p-5">
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold"><UserPlus size={15} /> Invite a vendor</h3>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs">Company<input value={invite.company} onChange={(e) => setInvite((s) => ({ ...s, company: e.target.value }))} className="mt-1 block rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand" placeholder="Acme Corp" /></label>
+            <label className="text-xs">SPOC email<input value={invite.email} onChange={(e) => setInvite((s) => ({ ...s, email: e.target.value }))} className="mt-1 block rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand" placeholder="spoc@acme.com" /></label>
+            <button onClick={createInvite} className="rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-glow-sm hover:brightness-110">Generate invite</button>
+          </div>
+          {inviteLink && (
+            <div className="mt-3 rounded-xl border border-ok/40 bg-ok/10 p-2 text-xs">
+              <p className="mb-1 font-semibold text-ok">Invite link (send to the vendor):</p>
+              <code className="break-all text-fg">{inviteLink}</code>
+              <p className="mt-1 text-[10px] text-muted">In production this is emailed automatically; shown here for the demo.</p>
+            </div>
+          )}
+        </section>
+      )}
       {tab === "users" && (
         <section className="glass overflow-hidden rounded-2xl">
           <table className="w-full text-sm">
@@ -219,6 +251,27 @@ export default function Admin() {
               ))}
             </tbody>
           </table>
+        </section>
+      )}
+
+      {tab === "audit" && (
+        <section className="glass overflow-hidden rounded-2xl">
+          <div className="max-h-[28rem] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 border-b border-border bg-surface/90 text-left text-[10px] uppercase tracking-wider text-muted backdrop-blur"><tr><th className="px-4 py-2">When</th><th className="px-4 py-2">Actor</th><th className="px-4 py-2">Action</th><th className="px-4 py-2">Target</th></tr></thead>
+              <tbody>
+                {auditEntries.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-muted">No activity recorded yet.</td></tr>}
+                {auditEntries.map((e, i) => (
+                  <tr key={i} className="border-b border-border/50">
+                    <td className="px-4 py-2 text-[11px] text-muted">{new Date(e.ts).toLocaleString()}</td>
+                    <td className="px-4 py-2 font-mono text-xs">{e.actor}</td>
+                    <td className="px-4 py-2">{e.action}</td>
+                    <td className="px-4 py-2 text-xs text-muted">{e.target || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </main>

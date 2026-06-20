@@ -55,6 +55,13 @@ export default function Console() {
   const [results, setResults] = useState<Record<string, Adjudication>>({});
   const [scanning, setScanning] = useState<Record<string, boolean>>({});
   const [runningAll, setRunningAll] = useState(false);
+  const [evidenceView, setEvidenceView] = useState<{ filename: string; text: string; keywords: string[]; method: string } | null>(null);
+
+  async function openEvidence(ev: any) {
+    setEvidenceView({ filename: ev.filename, text: "", keywords: [], method: "loading" });
+    const r = await fetch(`/api/evidence?hash=${encodeURIComponent(ev.hash || "")}&controlId=${selected}`);
+    if (r.ok) setEvidenceView({ filename: ev.filename, ...(await r.json()) });
+  }
 
   const control = CONTROLS.find((c) => c.id === selected)!;
   const result = results[selected];
@@ -303,7 +310,9 @@ export default function Console() {
                   {ans && (ans.response || (ans.evidence?.length ?? 0) > 0 || ans.applicable === false) ? (
                     <>
                       <p className="font-medium text-fg">{ans.applicable === false ? "(marked Not Applicable)" : ans.response || "(blank)"}</p>
-                      {(ans.evidence ?? []).map((e: any) => <p key={e.id} className="mt-1 text-muted">📎 {e.filename}</p>)}
+                      {(ans.evidence ?? []).map((e: any) => (
+                        <button key={e.id} onClick={() => openEvidence(e)} className="mt-1 block text-left text-muted underline decoration-dotted hover:text-brand">📎 {e.filename}</button>
+                      ))}
                     </>
                   ) : vendorId === "apex" && control.demo ? (
                     <>
@@ -420,9 +429,42 @@ export default function Console() {
             </div>
             <TracerGraph control={control} frameworks={FRAMEWORKS} verdict={result?.verdict} active={!!result} />
           </div>
+
+          {/* Evidence viewer with highlighted matches */}
+          {evidenceView && (
+            <div className="glass rounded-2xl p-5">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-semibold">📎 {evidenceView.filename}</span>
+                <button onClick={() => setEvidenceView(null)} className="text-xs text-muted hover:text-fg">close</button>
+              </div>
+              {evidenceView.method === "loading" ? (
+                <p className="text-xs text-muted">Loading…</p>
+              ) : evidenceView.text ? (
+                <>
+                  <p className="mb-2 text-[11px] text-muted">Extracted via {evidenceView.method} · matched terms highlighted</p>
+                  <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2/40 p-3 text-xs leading-relaxed">
+                    <Highlighted text={evidenceView.text} keywords={evidenceView.keywords} />
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs italic text-muted">No readable text extracted from this file.</p>
+              )}
+            </div>
+          )}
         </section>
       </div>
     </main>
+  );
+}
+
+function Highlighted({ text, keywords }: { text: string; keywords: string[] }) {
+  if (!keywords.length) return <>{text}</>;
+  const re = new RegExp(`(${keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  const kset = new Set(keywords.map((k) => k.toLowerCase()));
+  return (
+    <>
+      {text.split(re).map((p, i) => (kset.has(p.toLowerCase()) ? <mark key={i} className="rounded bg-warn/40 px-0.5 text-fg">{p}</mark> : <span key={i}>{p}</span>))}
+    </>
   );
 }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentSession, can } from "@/lib/auth";
 import { setReview } from "@/lib/store";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -16,5 +17,6 @@ export async function POST(req: NextRequest) {
     riskStatement: riskStatement || "",
     recommendations: Array.isArray(recommendations) ? recommendations : [],
   });
+  audit(s!.username, "returned for remediation", `${controlId} · ${vendorId}`);
   return NextResponse.json({ ok: true, review: sub.reviews?.[controlId] });
 }

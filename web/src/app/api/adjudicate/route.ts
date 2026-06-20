@@ -6,6 +6,7 @@ import { getSettings } from "@/lib/settings";
 import { adjudicate, staticAdjudicate, type EffAnswer } from "@/lib/adjudicator";
 import { getExtractionByHash } from "@/lib/extract";
 import { currentSession, can } from "@/lib/auth";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,7 @@ export async function POST(req: NextRequest) {
   const c = CONTROLS.find((x) => x.id === controlId);
   if (!c) return NextResponse.json({ error: "unknown control" }, { status: 404 });
 
+  audit(session!.username, "adjudicated control", `${controlId} · ${vendorId}`);
   const stored = getSubmission(vendorId).answers[controlId];
   const hasRealSubmission = !!stored && (!!stored.response || (stored.evidence?.length ?? 0) > 0 || stored.applicable === false);
 

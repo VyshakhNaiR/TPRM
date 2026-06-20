@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -15,10 +15,20 @@ const TIER_TONE: Record<string, string> = { Critical: "text-danger", High: "text
 
 export default function Onboard() {
   const router = useRouter();
-  const [f, setF] = useState({ company: "", address: "", website: "", email: "", spocPhone: "", serviceDescription: "", country: "", directContract: false, password: "", dataSensitivity: "confidential", access: "limited", criticality: "medium", frameworks: [] as string[], volume: "medium" });
+  const [f, setF] = useState({ company: "", address: "", website: "", email: "", spocPhone: "", serviceDescription: "", country: "", directContract: false, password: "", dataSensitivity: "confidential", access: "limited", criticality: "medium", frameworks: [] as string[], volume: "medium", invite: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k: string, v: any) => setF((s) => ({ ...s, [k]: v }));
+
+  // Pre-fill from an assessor invite link (?invite=token).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("invite");
+    if (!t) return;
+    setF((s) => ({ ...s, invite: t }));
+    fetch(`/api/invite?token=${t}`).then((r) => r.json()).then((d) => {
+      if (d.invite) setF((s) => ({ ...s, company: d.invite.company, email: d.invite.email, invite: t }));
+    }).catch(() => {});
+  }, []);
   const toggleFw = (fw: string) => set("frameworks", f.frameworks.includes(fw) ? f.frameworks.filter((x) => x !== fw) : [...f.frameworks, fw]);
   const { tier } = computeTier({ dataSensitivity: f.dataSensitivity as any, access: f.access as any, criticality: f.criticality as any, frameworks: f.frameworks, volume: f.volume as any });
 
@@ -45,6 +55,7 @@ export default function Onboard() {
           </div>
         </div>
 
+        {f.invite && <div className="mt-3 rounded-xl border border-brand/40 bg-brand/10 px-3 py-2 text-xs text-brand">✓ You were invited by your client — company and email are pre-filled.</div>}
         <form onSubmit={submit} className="mt-5 grid gap-3 sm:grid-cols-2">
           <label className="text-xs sm:col-span-2">Company / vendor name *
             <input required value={f.company} onChange={(e) => set("company", e.target.value)} className={inputCls + " mt-1"} placeholder="Acme Cloud Services Pvt. Ltd." />

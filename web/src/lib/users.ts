@@ -103,3 +103,32 @@ export function listVendors() {
 export function getVendorProfile(vendorId: string): VendorProfile | null {
   return Object.values(readAll()).find((u) => u.vendorId === vendorId)?.profile ?? null;
 }
+
+// ---- Invite-based onboarding ----
+const INVITES = path.join(DIR, "invites.json");
+export interface Invite { token: string; company: string; email: string; createdBy: string; createdAt: string; used: boolean; }
+function readInvites(): Record<string, Invite> {
+  try { return JSON.parse(fs.readFileSync(INVITES, "utf8")); } catch { return {}; }
+}
+function writeInvites(all: Record<string, Invite>) {
+  fs.mkdirSync(DIR, { recursive: true });
+  fs.writeFileSync(INVITES, JSON.stringify(all, null, 2));
+}
+export function createInvite(input: { company: string; email: string; createdBy: string }): Invite {
+  const all = readInvites();
+  const token = crypto.randomBytes(12).toString("hex");
+  const inv: Invite = { token, company: input.company.trim(), email: input.email.trim().toLowerCase(), createdBy: input.createdBy, createdAt: new Date().toISOString(), used: false };
+  all[token] = inv;
+  writeInvites(all);
+  return inv;
+}
+export function getInvite(token: string): Invite | null {
+  return readInvites()[token] || null;
+}
+export function consumeInvite(token: string) {
+  const all = readInvites();
+  if (all[token]) { all[token].used = true; writeInvites(all); }
+}
+export function listInvites(): Invite[] {
+  return Object.values(readInvites()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createVendor } from "@/lib/users";
+import { createVendor, consumeInvite } from "@/lib/users";
 import { encodeSession, SESSION_COOKIE } from "@/lib/auth";
 import { computeTier } from "@/lib/risk";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -31,6 +32,8 @@ export async function POST(req: NextRequest) {
   }
   try {
     const session = createVendor({ email: b.email, password: b.password, profile });
+    if (b.invite) consumeInvite(b.invite);
+    audit(session.username, "vendor onboarded", `${profile.company} · ${tier} tier`);
     const res = NextResponse.json({ session });
     res.cookies.set(SESSION_COOKIE, encodeSession(session), {
       httpOnly: true, sameSite: "lax", path: "/",
