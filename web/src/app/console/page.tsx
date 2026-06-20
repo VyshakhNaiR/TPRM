@@ -27,13 +27,28 @@ import { cn } from "@/lib/utils";
 
 export default function Console() {
   const router = useRouter();
+  const [vendors, setVendors] = useState<{ vendorId: string; name: string; answered: number; total: number; status: string }[]>([]);
+  const [vendorId, setVendorId] = useState("apex");
+  const [submission, setSubmission] = useState<any>(null);
+
   useEffect(() => {
     (async () => {
       const me = await (await fetch("/api/me")).json();
       const role = me.session?.role;
-      if (role !== "assessor" && role !== "root" && role !== "viewer") router.push("/login");
+      if (role !== "assessor" && role !== "root" && role !== "viewer") { router.push("/login"); return; }
+      const r = await fetch("/api/vendors");
+      if (r.ok) setVendors((await r.json()).vendors);
     })();
   }, [router]);
+
+  // Load the selected vendor's submission; reset adjudication state on switch.
+  useEffect(() => {
+    (async () => {
+      const r = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
+      setSubmission(r.ok ? await r.json() : null);
+      setResults({});
+    })();
+  }, [vendorId]);
 
   const [selected, setSelected] = useState(CONTROLS[0].id);
   const [results, setResults] = useState<Record<string, Adjudication>>({});
@@ -42,6 +57,8 @@ export default function Console() {
 
   const control = CONTROLS.find((c) => c.id === selected)!;
   const result = results[selected];
+  const ans = submission?.answers?.[selected];
+  const selectedVendorName = vendors.find((v) => v.vendorId === vendorId)?.name ?? VENDOR.name;
 
   async function adjudicate(id: string) {
     setScanning((s) => ({ ...s, [id]: true }));
@@ -49,7 +66,7 @@ export default function Console() {
       const res = await fetch("/api/adjudicate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ controlId: id }),
+        body: JSON.stringify({ controlId: id, vendorId }),
       });
       const data: Adjudication = await res.json();
       // small delay so the "scanning" shimmer is visible (demo polish)
@@ -120,6 +137,17 @@ export default function Console() {
           <span className="hidden text-sm text-muted sm:inline">· Assessor Console</span>
         </div>
         <div className="flex items-center gap-3">
+          <select
+            value={vendorId}
+            onChange={(e) => setVendorId(e.target.value)}
+            className="rounded-xl border border-border bg-surface/60 px-2.5 py-2 text-xs outline-none focus:border-brand"
+            aria-label="Select vendor"
+          >
+            {vendors.map((v) => (
+              <option key={v.vendorId} value={v.vendorId}>{v.name} ({v.answered}/{v.total})</option>
+            ))}
+          </select>
+          <Link href="/portfolio" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Portfolio</Link>
           <button
             onClick={runAll}
             disabled={runningAll}
@@ -148,8 +176,8 @@ export default function Console() {
             </div>
             <div>
               <div className="text-xs uppercase tracking-wider text-muted">Vendor under assessment</div>
-              <div className="mt-1 text-xl font-bold">{VENDOR.name}</div>
-              <div className="mt-0.5 text-sm text-muted">{VENDOR.engagement}</div>
+              <div className="mt-1 text-xl font-bold">{selectedVendorName}</div>
+              <div className="mt-0.5 text-sm text-muted">{submission?.status === "submitted" ? "Submitted for review" : "Assessment in progress"}</div>
             </div>
           </div>
           <div className="mt-4 grid grid-cols-4 gap-3">
@@ -246,7 +274,12 @@ export default function Console() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <Panel icon={FileText} title="RFI — evidence requested">{control.rfi || "—"}</Panel>
                 <Panel icon={Paperclip} title="Vendor response & evidence">
-                  {control.demo ? (
+                  {ans && (ans.response || (ans.evidence?.length ?? 0) > 0 || ans.applicable === false) ? (
+                    <>
+                      <p className="font-medium text-fg">{ans.applicable === false ? "(marked Not Applicable)" : ans.response || "(blank)"}</p>
+                      {(ans.evidence ?? []).map((e: any) => <p key={e.id} className="mt-1 text-muted">📎 {e.filename}</p>)}
+                    </>
+                  ) : vendorId === "apex" && control.demo ? (
                     <>
                       <p className="font-medium text-fg">{control.demo.vendorResponse || "(blank)"}</p>
                       {control.demo.vendorEvidence && <p className="mt-1 text-muted">{control.demo.vendorEvidence}</p>}

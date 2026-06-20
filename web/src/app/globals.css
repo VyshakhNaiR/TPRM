@@ -168,6 +168,14 @@ body {
 
 ::selection { background: rgb(var(--brand) / 0.3); }
 
+/* print / export-to-PDF: clean white, hide chrome */
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+  .glass { background: #fff !important; backdrop-filter: none !important; border-color: #ddd !important; box-shadow: none !important; }
+  .bg-grid, .aurora { display: none !important; }
+}
+
 /* thin scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {

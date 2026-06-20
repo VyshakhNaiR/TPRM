@@ -31,6 +31,7 @@ export default function Admin() {
   const [draft, setDraft] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [evalData, setEvalData] = useState<any>(null);
 
   useEffect(() => {
     (async () => {
@@ -48,6 +49,7 @@ export default function Admin() {
         hybrid: { ...m.hybrid },
       });
       setUsers((await (await fetch("/api/users")).json()).users);
+      try { const e = await fetch("/api/eval"); if (e.ok) setEvalData(await e.json()); } catch {}
     })();
   }, [router]);
 
@@ -90,6 +92,20 @@ export default function Admin() {
 
       {tab === "processing" && (
         <section className="space-y-5">
+          {/* static-pipeline accuracy eval (measured vs the sample's human verdicts) */}
+          {evalData && (
+            <div className="glass flex flex-wrap items-center gap-4 rounded-2xl p-4">
+              <div className="text-center">
+                <div className={cn("text-3xl font-bold tabular-nums", evalData.agreementPct >= 80 ? "text-ok" : evalData.agreementPct >= 60 ? "text-warn" : "text-danger")}>{evalData.agreementPct}%</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted">static accuracy</div>
+              </div>
+              <div className="text-xs text-muted">
+                <p>Static Pipeline vs human assessor verdicts — <span className="text-fg">{evalData.agree}/{evalData.total}</span> agree on the labelled sample controls.</p>
+                <p className={cn("mt-0.5", evalData.falseCompliant > 0 ? "text-danger" : "text-ok")}>False-Compliant (the dangerous error): {evalData.falseCompliant}</p>
+                <p className="mt-0.5 text-[10px]">Measured on the curated sample (small set); full questionnaire eval grows the sample. Numbers are real, not claimed.</p>
+              </div>
+            </div>
+          )}
           {/* category cards */}
           <div className="grid gap-2 sm:grid-cols-2">
             {meta.categories.map((cat: any) => {
