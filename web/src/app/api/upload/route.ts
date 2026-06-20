@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentSession } from "@/lib/auth";
 import { addEvidence } from "@/lib/store";
 import { saveUpload } from "@/lib/storage";
+import { extractFile } from "@/lib/extract";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 
@@ -20,6 +22,9 @@ export async function POST(req: NextRequest) {
   if (bytes.length > MAX_BYTES) return NextResponse.json({ error: "file too large" }, { status: 413 });
 
   const ev = await saveUpload(s.vendorId!, file.name, bytes);
-  const submission = addEvidence(s.vendorId!, controlId, ev);
-  return NextResponse.json({ evidence: ev, submission });
+  // Deterministically extract + cache the file's text (shared by static + AI engines).
+  const extraction = await extractFile(file.name, bytes, { ocr: getSettings().static.ocrEnabled });
+  const record = { ...ev, hash: extraction.hash, textChars: extraction.chars };
+  const submission = addEvidence(s.vendorId!, controlId, record);
+  return NextResponse.json({ evidence: record, extracted: { method: extraction.method, chars: extraction.chars }, submission });
 }

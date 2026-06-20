@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
@@ -25,6 +26,15 @@ import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat } from "@/comp
 import { cn } from "@/lib/utils";
 
 export default function Console() {
+  const router = useRouter();
+  useEffect(() => {
+    (async () => {
+      const me = await (await fetch("/api/me")).json();
+      const role = me.session?.role;
+      if (role !== "assessor" && role !== "root" && role !== "viewer") router.push("/login");
+    })();
+  }, [router]);
+
   const [selected, setSelected] = useState(CONTROLS[0].id);
   const [results, setResults] = useState<Record<string, Adjudication>>({});
   const [scanning, setScanning] = useState<Record<string, boolean>>({});

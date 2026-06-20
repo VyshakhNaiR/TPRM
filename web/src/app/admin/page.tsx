@@ -1,0 +1,210 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Cpu, Users, LogOut, Save, Check, Loader2, KeyRound, Server, Cloud, GitMerge } from "lucide-react";
+import { LogoLockup } from "@/components/animated-logo";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { cn } from "@/lib/utils";
+
+const ROLE_TONE: Record<string, string> = {
+  root: "text-mas border-mas/40 bg-mas/10",
+  assessor: "text-brand border-brand/40 bg-brand/10",
+  vendor: "text-ok border-ok/40 bg-ok/10",
+  viewer: "text-muted border-border bg-surface-2",
+};
+const CAT_ICON: Record<string, any> = { static: Cpu, local: Server, integrated: Cloud, hybrid: GitMerge };
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block text-xs">{label}<div className="mt-1">{children}</div></label>;
+}
+const inputCls = "w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand disabled:opacity-60";
+
+export default function Admin() {
+  const router = useRouter();
+  const [role, setRole] = useState("");
+  const [meta, setMeta] = useState<any>(null);
+  const [masked, setMasked] = useState<any>(null);
+  const [canManage, setCanManage] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  const [tab, setTab] = useState<"processing" | "users">("processing");
+  const [draft, setDraft] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const me = await (await fetch("/api/me")).json();
+      if (!me.session || (me.session.role !== "root" && me.session.role !== "viewer")) { router.push("/login"); return; }
+      setRole(me.session.role);
+      const s = await (await fetch("/api/settings")).json();
+      setMeta(s); setMasked(s.settings); setCanManage(s.canManage);
+      const m = s.settings;
+      setDraft({
+        category: m.category,
+        static: { ...m.static },
+        local: { provider: m.local.provider, ollama: { ...m.local.ollama }, claudecode: { ...m.local.claudecode } },
+        integrated: { provider: m.integrated.provider, claude: { model: m.integrated.claude.model }, openai: { model: m.integrated.openai.model, baseUrl: m.integrated.openai.baseUrl }, grok: { model: m.integrated.grok.model, baseUrl: m.integrated.grok.baseUrl }, gemini: { model: m.integrated.gemini.model } },
+        hybrid: { ...m.hybrid },
+      });
+      setUsers((await (await fetch("/api/users")).json()).users);
+    })();
+  }, [router]);
+
+  function patch(p: any) { setDraft((d: any) => ({ ...d, ...p })); }
+  function patchIntegrated(prov: string, field: string, val: string) {
+    setDraft((d: any) => ({ ...d, integrated: { ...d.integrated, [prov]: { ...d.integrated[prov], [field]: val } } }));
+  }
+  function patchLocal(prov: string, field: string, val: string) {
+    setDraft((d: any) => ({ ...d, local: { ...d.local, [prov]: { ...d.local[prov], [field]: val } } }));
+  }
+
+  async function save() {
+    setSaving(true);
+    const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
+    if (res.ok) { setMasked((await res.json()).settings); setSaved(true); setTimeout(() => setSaved(false), 1800); }
+    setSaving(false);
+  }
+  async function logout() { await fetch("/api/logout", { method: "POST" }); router.push("/login"); }
+
+  if (!draft || !meta) return <main className="grid min-h-screen place-items-center text-muted"><Loader2 className="animate-spin" /></main>;
+
+  const intProv = meta.integratedProviders.find((p: any) => p.id === draft.integrated.provider);
+  const intMaskKey = masked.integrated[draft.integrated.provider];
+
+  return (
+    <main className="mx-auto min-h-screen max-w-5xl px-5 pb-20">
+      <header className="sticky top-0 z-20 -mx-5 mb-6 flex items-center justify-between border-b border-border bg-bg/70 px-5 py-3 backdrop-blur">
+        <div className="flex items-center gap-3"><LogoLockup markWidth={38} /><span className="hidden text-sm text-muted sm:inline">· Root Console</span></div>
+        <div className="flex items-center gap-3">
+          <span className={cn("rounded-full border px-2.5 py-1 text-xs font-semibold", ROLE_TONE[role])}>{role}{!canManage && " · read-only"}</span>
+          <ThemeToggle />
+          <button onClick={logout} className="grid h-9 w-9 place-items-center rounded-xl border border-border text-muted hover:text-fg" aria-label="Sign out"><LogOut size={16} /></button>
+        </div>
+      </header>
+
+      <div className="mb-5 flex gap-2">
+        <button onClick={() => setTab("processing")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "processing" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Cpu size={15} /> Processing engine</button>
+        <button onClick={() => setTab("users")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "users" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Users size={15} /> Users & roles</button>
+      </div>
+
+      {tab === "processing" && (
+        <section className="space-y-5">
+          {/* category cards */}
+          <div className="grid gap-2 sm:grid-cols-2">
+            {meta.categories.map((cat: any) => {
+              const Icon = CAT_ICON[cat.id]; const active = draft.category === cat.id;
+              return (
+                <button key={cat.id} disabled={!canManage} onClick={() => patch({ category: cat.id })}
+                  className={cn("rounded-2xl border p-4 text-left transition disabled:opacity-70", active ? "border-brand/60 bg-brand/10 shadow-glow-sm" : "border-border bg-surface/40 hover:bg-surface-2")}>
+                  <div className="flex items-center justify-between"><span className="inline-flex items-center gap-2 font-semibold"><Icon size={16} className="text-brand" />{cat.label}</span>{active && <Check size={16} className="text-brand" />}</div>
+                  <p className="mt-1 text-xs text-muted">{cat.desc}</p>
+                  <span className="mt-1 inline-block text-[11px] font-medium text-muted">{cat.cost}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* per-category config */}
+          <div className="glass rounded-2xl p-5">
+            {draft.category === "static" && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Static Pipeline configuration</h3>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Field label={`Coverage threshold (${draft.static.coverageThreshold})`}>
+                    <input type="range" min={0} max={1} step={0.05} disabled={!canManage} value={draft.static.coverageThreshold} onChange={(e) => patch({ static: { ...draft.static, coverageThreshold: Number(e.target.value) } })} className="w-full" />
+                  </Field>
+                  <label className="flex items-center gap-2 text-xs"><input type="checkbox" disabled={!canManage} checked={draft.static.requireRecentDate} onChange={(e) => patch({ static: { ...draft.static, requireRecentDate: e.target.checked } })} /> Require recent date (≤12 mo)</label>
+                  <label className="flex items-center gap-2 text-xs"><input type="checkbox" disabled={!canManage} checked={draft.static.ocrEnabled} onChange={(e) => patch({ static: { ...draft.static, ocrEnabled: e.target.checked } })} /> OCR images on upload</label>
+                </div>
+                <p className="text-xs text-muted">Pure rules + content extraction. No tokens, no external calls.</p>
+              </div>
+            )}
+
+            {draft.category === "local" && (
+              <div className="space-y-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold"><Server size={15} /> Local AI Model</h3>
+                <Field label="Provider">
+                  <select disabled={!canManage} value={draft.local.provider} onChange={(e) => patch({ local: { ...draft.local, provider: e.target.value } })} className={inputCls}>
+                    {meta.localProviders.map((p: any) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                  </select>
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {draft.local.provider === "ollama" && <>
+                    <Field label="Base URL"><input disabled={!canManage} value={draft.local.ollama.baseUrl} onChange={(e) => patchLocal("ollama", "baseUrl", e.target.value)} className={inputCls} /></Field>
+                    <Field label="Model"><input disabled={!canManage} value={draft.local.ollama.model} onChange={(e) => patchLocal("ollama", "model", e.target.value)} className={inputCls} /></Field>
+                  </>}
+                  {draft.local.provider === "claudecode" && <Field label="Model"><input disabled={!canManage} value={draft.local.claudecode.model} onChange={(e) => patchLocal("claudecode", "model", e.target.value)} className={inputCls} /></Field>}
+                </div>
+                <p className="text-xs text-muted">Runs on your own infrastructure — no API bill; evidence never leaves your environment. Claude Code (Personal) uses your local subscription.</p>
+              </div>
+            )}
+
+            {draft.category === "integrated" && (
+              <div className="space-y-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold"><Cloud size={15} /> AI Integrated (cloud API)</h3>
+                <Field label="Provider">
+                  <select disabled={!canManage} value={draft.integrated.provider} onChange={(e) => patch({ integrated: { ...draft.integrated, provider: e.target.value } })} className={inputCls}>
+                    {meta.integratedProviders.map((p: any) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                  </select>
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {intProv?.fields.includes("apiKey") && (
+                    <Field label="API token"><input type="password" disabled={!canManage} placeholder={intMaskKey?.keySet ? `saved ${intMaskKey.keyHint}` : "not set"} onChange={(e) => patchIntegrated(draft.integrated.provider, "apiKey", e.target.value)} className={inputCls} /></Field>
+                  )}
+                  {intProv?.fields.includes("model") && <Field label="Model"><input disabled={!canManage} value={draft.integrated[draft.integrated.provider].model || ""} onChange={(e) => patchIntegrated(draft.integrated.provider, "model", e.target.value)} className={inputCls} /></Field>}
+                  {intProv?.fields.includes("baseUrl") && <Field label="Base URL"><input disabled={!canManage} value={draft.integrated[draft.integrated.provider].baseUrl || ""} onChange={(e) => patchIntegrated(draft.integrated.provider, "baseUrl", e.target.value)} className={inputCls} /></Field>}
+                </div>
+                <p className="flex items-center gap-1.5 text-xs text-muted"><KeyRound size={12} /> Tokens are stored server-side, shown only as ••••last4, and never returned in full. Blank = keep existing.</p>
+              </div>
+            )}
+
+            {draft.category === "hybrid" && (
+              <div className="space-y-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold"><GitMerge size={15} /> Hybrid (Static → AI)</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Escalate to">
+                    <select disabled={!canManage} value={draft.hybrid.escalateCategory} onChange={(e) => patch({ hybrid: { ...draft.hybrid, escalateCategory: e.target.value } })} className={inputCls}>
+                      <option value="local">Local AI Model</option>
+                      <option value="integrated">AI Integrated</option>
+                    </select>
+                  </Field>
+                  <Field label={`Confidence threshold (${draft.hybrid.threshold})`}>
+                    <input type="range" min={0.4} max={0.95} step={0.05} disabled={!canManage} value={draft.hybrid.threshold} onChange={(e) => patch({ hybrid: { ...draft.hybrid, threshold: Number(e.target.value) } })} className="w-full" />
+                  </Field>
+                </div>
+                <p className="text-xs text-muted">Static engine runs first ($0). Only controls scoring below the threshold escalate to the chosen engine — configure that engine in its own tab. Most controls resolve free.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted">Active engine: <span className="font-semibold text-fg">{masked.category}</span></span>
+            {canManage && (
+              <button onClick={save} disabled={saving} className="ml-auto inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60">
+                {saved ? <Check size={16} /> : saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}{saved ? "Saved" : saving ? "Saving…" : "Save configuration"}
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {tab === "users" && (
+        <section className="glass overflow-hidden rounded-2xl">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border text-left text-xs uppercase tracking-wider text-muted"><tr><th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Scope / Activity</th></tr></thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.username} className="border-b border-border/60 last:border-0">
+                  <td className="px-4 py-3"><div className="font-medium">{u.name}</div><div className="font-mono text-[11px] text-muted">{u.username}</div></td>
+                  <td className="px-4 py-3"><span className={cn("rounded-full border px-2 py-0.5 text-xs font-semibold", ROLE_TONE[u.role])}>{u.role}</span></td>
+                  <td className="px-4 py-3 text-muted">{u.role === "vendor" ? <span>{u.answered}/{u.total} answered · <span className={u.status === "submitted" ? "text-ok" : "text-warn"}>{u.status}</span></span> : u.role === "assessor" ? "Reviews all vendor submissions" : u.role === "root" ? "Full platform control" : "Read-only oversight"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </main>
+  );
+}

@@ -11,6 +11,8 @@ export interface Evidence {
   id: string;
   filename: string;
   size: number;
+  hash?: string; // SHA-256 -> shared extraction cache
+  textChars?: number; // extracted text length (0 = nothing readable)
 }
 export interface Answer {
   response: string;

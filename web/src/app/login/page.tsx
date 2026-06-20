@@ -29,7 +29,8 @@ export default function Login() {
       return;
     }
     const { session } = await res.json();
-    router.push(session.role === "vendor" ? "/vendor" : "/console");
+    const landing: Record<string, string> = { root: "/admin", viewer: "/admin", assessor: "/console", vendor: "/vendor" };
+    router.push(landing[session.role] ?? "/console");
   }
 
   function quick(u: string) {
@@ -74,11 +75,16 @@ export default function Login() {
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        <div className="mt-5 border-t border-border pt-4 text-center text-xs text-muted">
+        <p className="mt-4 text-center text-xs text-muted">
+          New vendor? <a href="/onboard" className="font-semibold text-brand hover:underline">Onboard your company →</a>
+        </p>
+        <div className="mt-4 border-t border-border pt-4 text-center text-xs text-muted">
           <p className="mb-2">Demo accounts (password: <span className="font-mono">demo</span>)</p>
-          <div className="flex justify-center gap-2">
-            <button onClick={() => quick("apex")} className="rounded-lg border border-border px-3 py-1 hover:text-fg">Vendor (apex)</button>
-            <button onClick={() => quick("dbs")} className="rounded-lg border border-border px-3 py-1 hover:text-fg">Assessor (dbs)</button>
+          <div className="flex flex-wrap justify-center gap-2">
+            <button onClick={() => quick("root")} className="rounded-lg border border-border px-3 py-1 hover:text-fg">Root</button>
+            <button onClick={() => quick("dbs")} className="rounded-lg border border-border px-3 py-1 hover:text-fg">Assessor</button>
+            <button onClick={() => quick("apex")} className="rounded-lg border border-border px-3 py-1 hover:text-fg">Vendor</button>
+            <button onClick={() => quick("viewer")} className="rounded-lg border border-border px-3 py-1 hover:text-fg">Viewer</button>
           </div>
         </div>
       </motion.div>
