@@ -44,7 +44,7 @@ export default function Home() {
         </motion.h1>
 
         <motion.p {...fade(0.16)} className="mt-5 max-w-xl text-pretty text-base text-muted sm:text-lg">
-          Vendors answer once. Sentinel reads their evidence, judges claim against proof,
+          Vendors answer once. The platform reads their evidence, judges claim against proof,
           and lights up coverage across <span className="text-fg">MAS</span>,{" "}
           <span className="text-fg">RBI</span> and <span className="text-fg">SEBI CSCRF</span> in real time.
         </motion.p>
