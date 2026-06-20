@@ -15,6 +15,7 @@ const config: Config = {
         muted: "rgb(var(--muted) / <alpha-value>)",
         brand: "rgb(var(--brand) / <alpha-value>)",
         "brand-2": "rgb(var(--brand-2) / <alpha-value>)",
+        accent: "rgb(var(--accent) / <alpha-value>)",
         ok: "rgb(var(--ok) / <alpha-value>)",
         warn: "rgb(var(--warn) / <alpha-value>)",
         danger: "rgb(var(--danger) / <alpha-value>)",

@@ -13,8 +13,9 @@
   --border: 224 229 240;
   --fg: 15 23 42;
   --muted: 100 116 139;
-  --brand: 37 99 235;     /* DBS-ish blue */
-  --brand-2: 14 165 233;
+  --brand: 142 44 122;    /* NI magenta-purple (#8E2C7A) */
+  --brand-2: 176 30 79;   /* NI crimson (#B01E4F) */
+  --accent: 244 194 13;   /* NI gold (#F4C20D) */
   --ok: 22 163 74;
   --warn: 217 119 6;
   --danger: 220 38 38;
@@ -34,8 +35,9 @@
   --border: 35 43 64;
   --fg: 226 232 240;
   --muted: 148 163 184;
-  --brand: 56 189 248;
-  --brand-2: 99 102 241;
+  --brand: 204 77 166;    /* NI magenta (dark) */
+  --brand-2: 232 90 130;  /* NI crimson-pink (dark) */
+  --accent: 244 194 13;   /* NI gold */
   --ok: 52 211 153;
   --warn: 251 191 36;
   --danger: 248 113 113;
@@ -66,14 +68,38 @@ body {
     linear-gradient(to bottom, rgb(var(--grid-line) / var(--grid-alpha)) 1px, transparent 1px);
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%);
+  animation: grid-pan 7s linear infinite;
 }
+@keyframes grid-pan { to { background-position: 44px 44px; } }
 
 .aurora {
   background:
-    radial-gradient(60% 50% at 20% 10%, rgb(var(--brand) / 0.18), transparent 60%),
-    radial-gradient(50% 50% at 85% 15%, rgb(var(--brand-2) / 0.16), transparent 60%),
-    radial-gradient(55% 45% at 60% 90%, rgb(var(--sebi) / 0.12), transparent 60%);
+    radial-gradient(60% 50% at 20% 10%, rgb(var(--brand) / 0.22), transparent 60%),
+    radial-gradient(50% 50% at 85% 15%, rgb(var(--brand-2) / 0.20), transparent 60%),
+    radial-gradient(45% 40% at 75% 60%, rgb(var(--accent) / 0.10), transparent 60%),
+    radial-gradient(55% 45% at 60% 92%, rgb(var(--sebi) / 0.14), transparent 60%);
   filter: blur(8px);
+  animation: aurora-shift 16s ease-in-out infinite;
+}
+@keyframes aurora-shift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
+  50% { transform: translate3d(-2%, 2%, 0) scale(1.08); opacity: 1; }
+}
+
+/* drifting particles */
+@keyframes float-up {
+  0% { transform: translateY(30px); opacity: 0; }
+  15%, 85% { opacity: 0.55; }
+  100% { transform: translateY(-140px); opacity: 0; }
+}
+.particle {
+  position: absolute;
+  border-radius: 9999px;
+  background: rgb(var(--brand));
+  animation: float-up linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bg-grid, .aurora, .particle { animation: none !important; }
 }
 
 .glass {
