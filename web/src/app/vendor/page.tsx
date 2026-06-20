@@ -44,6 +44,7 @@ export default function VendorPortal() {
   const answered = CONTROLS.filter((c) => answers[c.id] && (answers[c.id].response?.trim() || answers[c.id].applicable === false)).length;
   const pct = Math.round((answered / CONTROLS.length) * 100);
   const submitted = sub?.status === "submitted";
+  const needsAttention = Object.values((sub?.reviews ?? {}) as Record<string, { status: string }>).filter((r) => r.status === "open").length;
 
   async function save(controlId: string, patch: { response?: string; applicable?: boolean }) {
     setSaving((s) => ({ ...s, [controlId]: true }));
@@ -98,7 +99,7 @@ export default function VendorPortal() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold">Security Questionnaire</h1>
-            <p className="text-sm text-muted">{answered} of {CONTROLS.length} answered · {submitted ? "submitted for review" : "draft"}</p>
+            <p className="text-sm text-muted">{answered} of {CONTROLS.length} answered · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
           </div>
           <button
             onClick={submitAll}
@@ -123,6 +124,9 @@ export default function VendorPortal() {
               {items.map((c) => {
                 const a = answers[c.id];
                 const na = a?.applicable === false;
+                const rev = sub.reviews?.[c.id];
+                // A returned (open) finding re-opens the control even after submission.
+                const locked = submitted && !(rev && rev.status === "open");
                 return (
                   <div key={c.id} className="glass rounded-2xl p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -134,6 +138,16 @@ export default function VendorPortal() {
                       {!saving[c.id] && a && (a.response?.trim() || na) && <CheckCircle2 size={15} className="mt-1 shrink-0 text-ok" />}
                     </div>
 
+                    {rev && rev.status === "open" && (
+                      <div className="mt-2 rounded-lg border border-danger/40 bg-danger/10 p-2 text-[11px]">
+                        <div className="font-semibold text-danger">↩ Returned for remediation — {rev.verdict}</div>
+                        {rev.riskStatement && <p className="mt-0.5 text-muted">{rev.riskStatement}</p>}
+                        {(rev.recommendations ?? []).slice(0, 3).map((r: string, i: number) => <p key={i} className="mt-0.5 text-muted">▸ {r}</p>)}
+                        <p className="mt-1 font-medium text-fg">Update your response / evidence below and it will be resubmitted.</p>
+                      </div>
+                    )}
+                    {rev && rev.status === "resubmitted" && <div className="mt-2 text-[11px] font-medium text-ok">✓ Resubmitted — awaiting assessor re-review.</div>}
+
                     <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-surface-2/50 p-2 text-[11px] text-muted">
                       <FileText size={12} className="mt-0.5 shrink-0" /><span>{c.rfi}</span>
                     </div>
@@ -142,7 +156,7 @@ export default function VendorPortal() {
                       <input
                         type="checkbox"
                         checked={na}
-                        disabled={submitted}
+                        disabled={locked}
                         onChange={(e) => save(c.id, { applicable: !e.target.checked })}
                       />
                       Not applicable to our engagement
@@ -152,7 +166,7 @@ export default function VendorPortal() {
                       <>
                         <textarea
                           defaultValue={a?.response ?? ""}
-                          disabled={submitted}
+                          disabled={locked}
                           onBlur={(e) => { if (e.target.value !== (a?.response ?? "")) save(c.id, { response: e.target.value }); }}
                           placeholder="Your response…"
                           rows={2}
@@ -167,7 +181,7 @@ export default function VendorPortal() {
                           />
                           <button
                             onClick={() => fileRefs.current[c.id]?.click()}
-                            disabled={submitted || uploading[c.id]}
+                            disabled={locked || uploading[c.id]}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium hover:border-brand/50 disabled:opacity-60"
                           >
                             {uploading[c.id] ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />}

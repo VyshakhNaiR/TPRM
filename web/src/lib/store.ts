@@ -21,11 +21,21 @@ export interface Answer {
   evidence: Evidence[];
   updatedAt: string;
 }
+// Assessor finding sent back to the vendor for remediation (the "(New)" cycle).
+export interface Review {
+  verdict: string;
+  risk: string;
+  riskStatement: string;
+  recommendations: string[];
+  status: "open" | "resubmitted";
+  reviewedAt: string;
+}
 export interface Submission {
   vendorId: string;
   status: "draft" | "submitted";
   submittedAt?: string;
   answers: Record<string, Answer>;
+  reviews?: Record<string, Review>;
   updatedAt: string;
 }
 
@@ -54,9 +64,14 @@ function write(s: Submission) {
 function blankAnswer(): Answer {
   return { response: "", applicable: true, evidence: [], updatedAt: now() };
 }
+// If the vendor edits a control that has an OPEN finding, mark it resubmitted.
+function touchReview(s: Submission, controlId: string) {
+  if (s.reviews?.[controlId]?.status === "open") s.reviews[controlId].status = "resubmitted";
+}
 export function saveAnswer(vendorId: string, controlId: string, patch: Partial<Answer>): Submission {
   const s = getSubmission(vendorId);
   s.answers[controlId] = { ...(s.answers[controlId] ?? blankAnswer()), ...patch, updatedAt: now() };
+  touchReview(s, controlId);
   s.updatedAt = now();
   write(s);
   return s;
@@ -67,6 +82,15 @@ export function addEvidence(vendorId: string, controlId: string, ev: Evidence): 
   a.evidence = [...(a.evidence ?? []), ev];
   a.updatedAt = now();
   s.answers[controlId] = a;
+  touchReview(s, controlId);
+  s.updatedAt = now();
+  write(s);
+  return s;
+}
+export function setReview(vendorId: string, controlId: string, r: { verdict: string; risk: string; riskStatement: string; recommendations: string[] }): Submission {
+  const s = getSubmission(vendorId);
+  s.reviews ??= {};
+  s.reviews[controlId] = { ...r, status: "open", reviewedAt: now() };
   s.updatedAt = now();
   write(s);
   return s;

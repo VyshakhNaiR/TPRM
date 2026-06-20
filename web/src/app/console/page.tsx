@@ -58,6 +58,7 @@ export default function Console() {
   const control = CONTROLS.find((c) => c.id === selected)!;
   const result = results[selected];
   const ans = submission?.answers?.[selected];
+  const review = submission?.reviews?.[selected];
   const selectedVendorName = vendors.find((v) => v.vendorId === vendorId)?.name ?? VENDOR.name;
 
   async function adjudicate(id: string) {
@@ -83,6 +84,19 @@ export default function Console() {
       if (!results[c.id]) await adjudicate(c.id);
     }
     setRunningAll(false);
+  }
+
+  // Return the current finding to the vendor for remediation.
+  async function sendBack() {
+    const r = results[selected];
+    if (!r) return;
+    await fetch("/api/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vendorId, controlId: selected, verdict: r.verdict, risk: r.risk, riskStatement: r.riskStatement, recommendations: r.recommendations }),
+    });
+    const s = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
+    if (s.ok) setSubmission(await s.json());
   }
 
   const summary = useMemo(() => {
@@ -324,8 +338,8 @@ export default function Console() {
                   </div>
                   <div className="flex items-center gap-3">
                     <ConfidenceMeter value={result.confidence} />
-                    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold", result.source === "ai" ? "bg-brand/15 text-brand" : "bg-surface-2 text-muted")}>
-                      {result.source === "ai" ? "Claude" : "offline demo"}
+                    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold", result.source === "ai" ? "bg-brand/15 text-brand" : result.source === "static" ? "bg-ok/15 text-ok" : "bg-surface-2 text-muted")}>
+                      {result.source === "ai" ? "AI engine" : result.source === "static" ? "Static · rules" : "Demo verdict"}
                     </span>
                   </div>
                 </div>
@@ -368,6 +382,20 @@ export default function Console() {
                 <div className="mt-3 flex items-center gap-1.5 text-[11px] text-muted">
                   <Quote size={11} /> {result.citations.join(" · ")}
                 </div>
+
+                {/* remediation action */}
+                {result.verdict === "Non-Compliant" && (
+                  <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-3">
+                    <button onClick={sendBack} className="inline-flex items-center gap-1.5 rounded-xl border border-warn/50 bg-warn/10 px-3 py-1.5 text-xs font-semibold text-warn hover:brightness-110">
+                      ↩ Send back for remediation
+                    </button>
+                    {review && (
+                      <span className={cn("text-[11px] font-medium", review.status === "resubmitted" ? "text-ok" : "text-warn")}>
+                        {review.status === "resubmitted" ? "Vendor has resubmitted — re-adjudicate" : "Returned to vendor — awaiting remediation"}
+                      </span>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
