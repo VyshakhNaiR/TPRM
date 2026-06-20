@@ -44,7 +44,7 @@ export function buildPortfolio() {
   for (const ov of listVendors()) {
     const sub = getSubmission(ov.vendorId);
     const rate = 0.7; // not used for real; verdicts derived from answers below
-    vendors.push({ id: ov.vendorId, name: ov.name, tier: "Unrated", rate, cloud: "—", region: ov.profile.country || "—", ...( {} ) } as any);
+    vendors.push({ id: ov.vendorId, name: ov.name, tier: ov.profile.tier || "Unrated", rate, cloud: "—", region: ov.profile.country || "—" } as any);
     (vendors[vendors.length - 1] as any)._real = sub;
   }
 

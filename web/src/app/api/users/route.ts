@@ -22,7 +22,7 @@ export async function GET() {
   });
   // Dynamically onboarded vendors
   const onboarded = listVendors().map((v) =>
-    vendorActivity(v.vendorId, { username: v.username, name: v.name, role: "vendor", vendorId: v.vendorId, onboarded: true, country: v.profile.country, service: v.profile.serviceDescription })
+    vendorActivity(v.vendorId, { username: v.username, name: v.name, role: "vendor", vendorId: v.vendorId, onboarded: true, country: v.profile.country, service: v.profile.serviceDescription, tier: v.profile.tier })
   );
 
   return NextResponse.json({ users: [...seeded, ...onboarded], canManage: can(s?.role, "users:manage") });

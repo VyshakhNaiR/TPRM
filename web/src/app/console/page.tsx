@@ -24,6 +24,7 @@ import { LogoLockup } from "@/components/animated-logo";
 import { TracerGraph } from "@/components/tracer-graph";
 import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { consolidatedRating } from "@/lib/risk";
 
 export default function Console() {
   const router = useRouter();
@@ -138,6 +139,8 @@ export default function Console() {
   }, []);
 
   const totalClauses = FRAMEWORKS.reduce((n, f) => n + f.clauses.length, 0);
+  const consolidated = consolidatedRating(Object.values(results).filter((r) => r.verdict === "Non-Compliant").map((r) => r.risk));
+  const RATING_TONE: Record<string, string> = { Good: "text-ok", Satisfactory: "text-ok", "Needs Improvement": "text-warn", Unsatisfactory: "text-danger" };
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-5 pb-20">
@@ -162,6 +165,8 @@ export default function Console() {
             ))}
           </select>
           <Link href="/portfolio" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Portfolio</Link>
+          <Link href="/sbom" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">SBOM</Link>
+          <Link href="/cost" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Cost</Link>
           <button
             onClick={runAll}
             disabled={runningAll}
@@ -200,6 +205,13 @@ export default function Console() {
             <Stat value={summary.nc} label="Non-Compliant" tone="danger" />
             <Stat value={summary.na} label="N/A" />
           </div>
+          {summary.assessed > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-3 text-sm">
+              <span className="text-xs text-muted">Consolidated rating:</span>
+              <span className={cn("font-bold", RATING_TONE[consolidated.rating])}>{consolidated.rating}</span>
+              <span className="text-xs text-muted">· Approval authority: <span className="text-fg">{consolidated.approval}</span></span>
+            </div>
+          )}
         </div>
         <div className="glass flex items-center justify-between gap-4 rounded-2xl p-5">
           <RiskDial score={summary.posture} label="posture" />

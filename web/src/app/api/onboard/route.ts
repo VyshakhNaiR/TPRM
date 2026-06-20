@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createVendor } from "@/lib/users";
 import { encodeSession, SESSION_COOKIE } from "@/lib/auth";
+import { computeTier } from "@/lib/risk";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   const b = await req.json();
+  const { tier, score } = computeTier({
+    dataSensitivity: b.dataSensitivity || "confidential",
+    access: b.access || "limited",
+    criticality: b.criticality || "medium",
+    frameworks: Array.isArray(b.frameworks) ? b.frameworks : [],
+    volume: b.volume || "medium",
+  });
   const profile = {
     company: (b.company || "").trim(),
     address: (b.address || "").trim(),
@@ -15,6 +23,8 @@ export async function POST(req: NextRequest) {
     serviceDescription: (b.serviceDescription || "").trim(),
     country: (b.country || "").trim(),
     directContract: !!b.directContract,
+    tier,
+    tierScore: score,
   };
   if (!profile.company || !b.email || !b.password) {
     return NextResponse.json({ error: "Company, email and password are required." }, { status: 400 });

@@ -7,15 +7,20 @@ import { motion } from "framer-motion";
 import { Building2, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
 import { AnimatedLogo } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { computeTier } from "@/lib/risk";
+import { cn } from "@/lib/utils";
 
 const inputCls = "w-full rounded-xl border border-border bg-surface/60 px-3 py-2.5 text-sm outline-none focus:border-brand";
+const TIER_TONE: Record<string, string> = { Critical: "text-danger", High: "text-warn", Medium: "text-brand", Low: "text-ok" };
 
 export default function Onboard() {
   const router = useRouter();
-  const [f, setF] = useState({ company: "", address: "", website: "", email: "", spocPhone: "", serviceDescription: "", country: "", directContract: false, password: "" });
+  const [f, setF] = useState({ company: "", address: "", website: "", email: "", spocPhone: "", serviceDescription: "", country: "", directContract: false, password: "", dataSensitivity: "confidential", access: "limited", criticality: "medium", frameworks: [] as string[], volume: "medium" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k: string, v: any) => setF((s) => ({ ...s, [k]: v }));
+  const toggleFw = (fw: string) => set("frameworks", f.frameworks.includes(fw) ? f.frameworks.filter((x) => x !== fw) : [...f.frameworks, fw]);
+  const { tier } = computeTier({ dataSensitivity: f.dataSensitivity as any, access: f.access as any, criticality: f.criticality as any, frameworks: f.frameworks, volume: f.volume as any });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -69,6 +74,42 @@ export default function Onboard() {
             <input type="checkbox" checked={f.directContract} onChange={(e) => set("directContract", e.target.checked)} />
             We have a direct contract with the client
           </label>
+
+          {/* inherent-risk tiering */}
+          <div className="rounded-xl border border-border bg-surface-2/40 p-3 sm:col-span-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted">Risk profile (auto-tiers your assessment)</span>
+              <span className={cn("rounded-full border border-border px-2.5 py-0.5 text-xs font-bold", TIER_TONE[tier])}>{tier} tier</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-[11px]">Data sensitivity
+                <select value={f.dataSensitivity} onChange={(e) => set("dataSensitivity", e.target.value)} className={inputCls + " mt-1"}>
+                  <option value="none">None</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="regulated">Regulated / PII / payment</option>
+                </select>
+              </label>
+              <label className="text-[11px]">System / network access
+                <select value={f.access} onChange={(e) => set("access", e.target.value)} className={inputCls + " mt-1"}>
+                  <option value="none">None</option><option value="limited">Limited</option><option value="privileged">Privileged</option>
+                </select>
+              </label>
+              <label className="text-[11px]">Business criticality
+                <select value={f.criticality} onChange={(e) => set("criticality", e.target.value)} className={inputCls + " mt-1"}>
+                  <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+                </select>
+              </label>
+              <label className="text-[11px]">Data volume
+                <select value={f.volume} onChange={(e) => set("volume", e.target.value)} className={inputCls + " mt-1"}>
+                  <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="text-muted">Regulatory scope:</span>
+              {["MAS", "RBI", "SEBI"].map((fw) => (
+                <button type="button" key={fw} onClick={() => toggleFw(fw)} className={cn("rounded-lg border px-2 py-0.5", f.frameworks.includes(fw) ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}>{fw}</button>
+              ))}
+            </div>
+          </div>
 
           {error && <p className="text-xs text-danger sm:col-span-2">{error}</p>}
           <button disabled={busy} className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white shadow-glow transition hover:brightness-110 disabled:opacity-60 sm:col-span-2">

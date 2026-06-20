@@ -17,6 +17,8 @@ export interface VendorProfile {
   serviceDescription: string;
   country: string;
   directContract: boolean;
+  tier?: string;
+  tierScore?: number;
 }
 export interface StoredUser {
   username: string; // login id (email)
