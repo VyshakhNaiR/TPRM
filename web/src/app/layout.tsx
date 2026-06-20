@@ -16,7 +16,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body>
+      {/* suppressHydrationWarning: browser extensions (e.g. Grammarly) inject
+          data-gr-* attributes on <body> before React hydrates — benign mismatch. */}
+      <body suppressHydrationWarning>
         <ThemeProvider>
           <AnimatedBackground />
           {children}
