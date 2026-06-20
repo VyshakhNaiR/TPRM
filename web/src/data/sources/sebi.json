@@ -1,0 +1,24 @@
+{
+ "framework": "SEBI",
+ "clauses": [
+   {"id": "SEBI-GVSC-STRATEGY", "title": "Supply chain risk management strategy", "text": "Board-approved documented cyber supply chain risk management strategy covering identification, assessment and treatment of third-party/vendor risks.", "source": "CSCRF GV.SC; SEBI/HO/ITD-1/.../2024/113"},
+   {"id": "SEBI-GVSC-RISKASSESS", "title": "Third-party risk assessment by criticality", "text": "Due diligence and cyber risk assessment of each third party before onboarding and periodically, proportionate to criticality.", "source": "CSCRF GV.SC"},
+   {"id": "SEBI-GVSC-EQUALHIGHER", "title": "Vendors meet equal-or-higher standards", "text": "Third parties handling RE systems/data must meet cybersecurity standards equal to or higher than the RE's CSCRF obligations.", "source": "CSCRF GV.SC"},
+   {"id": "SEBI-GVSC-CONTRACT", "title": "Contractual cybersecurity clauses", "text": "Contracts embed right-to-audit, breach notification, data protection, confidentiality, CSCRF compliance, and secure exit (data return/destruction).", "source": "CSCRF GV.SC"},
+   {"id": "SEBI-GVSC-AUDITRIGHTS", "title": "Right to audit third parties", "text": "RE retains and exercises the right to audit/inspect third-party security posture and incident handling.", "source": "CSCRF GV.SC"},
+   {"id": "SEBI-GVSC-BREACHNOTIFY", "title": "Vendor breach notification", "text": "Vendors must promptly notify the RE of incidents affecting RE systems/data so the RE can meet SEBI/CERT-In timelines.", "source": "CSCRF GV.SC"},
+   {"id": "SEBI-GVSC-SUBAUDIT", "title": "Audit of material subcontractors (4th party)", "text": "Material subcontractors must be identified, held to equivalent requirements, and within the RE's audit scope.", "source": "CSCRF GV.SC"},
+   {"id": "SEBI-GVSC-ACCOUNTABLE", "title": "RE solely accountable", "text": "Outsourcing does not dilute the RE's responsibility; the RE remains solely accountable for third-party cybersecurity/compliance.", "source": "CSCRF GV.SC"},
+   {"id": "SEBI-SBOM", "title": "Software Bill of Materials (SBOM)", "text": "Obtain/maintain SBOM for all software in core/critical ops; vendors supply SBOM at purchase and on change, with the minimum prescribed fields and a board-approved exception process.", "source": "CSCRF SBOM; SEBI Aug 2025 clarifications"},
+   {"id": "SEBI-PRDS-ENC", "title": "Encryption in transit & at rest", "text": "Encrypt data in transit (strong TLS) and at rest (AES-256-class) per data classification.", "source": "CSCRF PR.DS"},
+   {"id": "SEBI-PRDS-KEYLOC", "title": "Keys & key management within India", "text": "Encryption keys and all key-management operations for RE data must remain within India.", "source": "CSCRF PR.DS; SEBI Aug 2025 clarifications"},
+   {"id": "SEBI-PRAA-MFA", "title": "MFA, least privilege & PAM", "text": "Least-privilege/need-to-know with PAM; MFA mandatory for critical systems and admin/privileged accounts (zero-trust aligned).", "source": "CSCRF PR.AA"},
+   {"id": "SEBI-PRMA-PATCH", "title": "Patch/remediation timelines", "text": "High/critical patches within one week; other VAPT findings within three months.", "source": "CSCRF PR.MA"},
+   {"id": "SEBI-DECM-SOC", "title": "24x7 SOC & continuous monitoring", "text": "24x7 SOC with SIEM/centralised logging and SOC efficacy reporting; M-SOC option for smaller REs.", "source": "CSCRF DE.CM"},
+   {"id": "SEBI-RCRP", "title": "Recovery planning, RTO/RPO, spare hardware", "text": "Tested BCP/DR with RTO/RPO; MIIs and Qualified REs maintain spare hardware for rapid recovery.", "source": "CSCRF RC.RP"},
+   {"id": "SEBI-VAPT", "title": "VAPT & cyber audit by CERT-In empanelled", "text": "VAPT and cyber audits at a cadence set by RE category, by CERT-In empanelled auditors, reported via CSCRF annexures.", "source": "CSCRF VAPT/Cyber Audit"},
+   {"id": "SEBI-ISO27001", "title": "ISO 27001 for MIIs & critical facilities", "text": "MIIs and critical third-party facilities (PDC/DR/NDR, SOC, data centre/colocation) must hold ISO/IEC 27001.", "source": "CSCRF ISO 27001 mandate"},
+   {"id": "SEBI-CLOUD", "title": "Cloud CSP requirements & localisation", "text": "Cloud via MeitY-empanelled + STQC-certified CSPs; market-critical/regulatory data stored/processed within India.", "source": "CSCRF Cloud; SEBI Cloud Framework"},
+   {"id": "SEBI-INCIDENT", "title": "Incident reporting to SEBI & CERT-In", "text": "Report incidents to SEBI and CERT-In within mandated timelines (incl. CERT-In 6-hour rule) with RCA and remediation.", "source": "CSCRF Incident Reporting; CERT-In Apr 2022"}
+ ]
+}

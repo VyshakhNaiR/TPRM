@@ -1,0 +1,177 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /* ---- LIGHT THEME: premium "private-banking" ---- */
+  --bg: 244 246 251;
+  --surface: 255 255 255;
+  --surface-2: 248 250 253;
+  --border: 224 229 240;
+  --fg: 15 23 42;
+  --muted: 100 116 139;
+  --brand: 37 99 235;     /* DBS-ish blue */
+  --brand-2: 14 165 233;
+  --ok: 22 163 74;
+  --warn: 217 119 6;
+  --danger: 220 38 38;
+  --mas: 225 29 72;
+  --rbi: 217 119 6;
+  --sebi: 99 102 241;
+
+  --grid-line: 15 23 42;
+  --grid-alpha: 0.04;
+}
+
+.dark {
+  /* ---- DARK THEME: security command center ---- */
+  --bg: 7 10 19;
+  --surface: 15 19 32;
+  --surface-2: 19 24 40;
+  --border: 35 43 64;
+  --fg: 226 232 240;
+  --muted: 148 163 184;
+  --brand: 56 189 248;
+  --brand-2: 99 102 241;
+  --ok: 52 211 153;
+  --warn: 251 191 36;
+  --danger: 248 113 113;
+  --mas: 251 113 133;
+  --rbi: 251 191 36;
+  --sebi: 129 140 248;
+
+  --grid-line: 148 163 184;
+  --grid-alpha: 0.06;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+body {
+  background-color: rgb(var(--bg));
+  color: rgb(var(--fg));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+/* Animated grid + aurora background layer */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(var(--grid-line) / var(--grid-alpha)) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(var(--grid-line) / var(--grid-alpha)) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%);
+}
+
+.aurora {
+  background:
+    radial-gradient(60% 50% at 20% 10%, rgb(var(--brand) / 0.18), transparent 60%),
+    radial-gradient(50% 50% at 85% 15%, rgb(var(--brand-2) / 0.16), transparent 60%),
+    radial-gradient(55% 45% at 60% 90%, rgb(var(--sebi) / 0.12), transparent 60%);
+  filter: blur(8px);
+}
+
+.glass {
+  background: rgb(var(--surface) / 0.72);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgb(var(--border) / 0.8);
+}
+
+/* shimmer used by the "AI scanning" state */
+.shimmer-track {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer-track::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(var(--brand) / 0.18), transparent);
+  animation: shimmer 1.6s infinite;
+}
+
+/* tracer flow on the SVG beams */
+.tracer {
+  stroke-dasharray: 7 12;
+  animation: tracer-flow 1.1s linear infinite;
+}
+@keyframes tracer-flow {
+  to { stroke-dashoffset: -38; }
+}
+
+/* ---- NI logo: elegant, living animation (no literal segment flow) ---- */
+/* soft bloom on first paint */
+@keyframes ni-enter {
+  from { opacity: 0; transform: scale(0.93); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.ni-enter {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ni-enter 1s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* breathing glow aura behind the mark */
+@keyframes ni-aura {
+  0%, 100% { opacity: 0.22; }
+  50%      { opacity: 0.5; }
+}
+.ni-aura { animation: ni-aura 4.5s ease-in-out infinite; }
+/* the "i" dot gently breathes */
+@keyframes ni-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
+.ni-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ni-breathe 3.2s ease-in-out infinite;
+}
+/* one-time word reveal */
+@keyframes ni-word {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ni-word {
+  transform-box: fill-box;
+  animation: ni-word 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* the gold cube radiates — rings emanate outward, glow pulses */
+@keyframes ni-radiate {
+  0%   { transform: scale(1);   opacity: 0.65; }
+  100% { transform: scale(2.7); opacity: 0; }
+}
+.ni-radiate {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ni-radiate 2.8s ease-out infinite;
+}
+.ni-radiate.d2 { animation-delay: -1.4s; }
+@keyframes ni-dotpulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50%      { opacity: 0.7; transform: scale(1.15); }
+}
+.ni-dotpulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ni-dotpulse 2.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ni-enter, .ni-aura, .ni-dot, .ni-word, .ni-radiate, .ni-dotpulse, .tracer { animation: none !important; }
+}
+
+::selection { background: rgb(var(--brand) / 0.3); }
+
+/* thin scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 99px;
+  border: 2px solid rgb(var(--bg));
+}
