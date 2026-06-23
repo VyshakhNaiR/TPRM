@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,13 +16,14 @@ import {
   CircleDashed,
   Quote,
   LogOut,
+  Inbox,
 } from "lucide-react";
 import { CONTROLS, FRAMEWORKS, VENDOR } from "@/data/seed";
 import type { Adjudication } from "@/data/types";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LogoLockup } from "@/components/animated-logo";
 import { TracerGraph } from "@/components/tracer-graph";
-import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat } from "@/components/ui";
+import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat, Toaster, ErrorState, errorMessage, useToasts } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { consolidatedRating } from "@/lib/risk";
 
@@ -31,36 +32,64 @@ export default function Console() {
   const [vendors, setVendors] = useState<{ vendorId: string; name: string; answered: number; total: number; status: string }[]>([]);
   const [vendorId, setVendorId] = useState("apex");
   const [submission, setSubmission] = useState<any>(null);
-
-  useEffect(() => {
-    (async () => {
-      const me = await (await fetch("/api/me")).json();
-      const role = me.session?.role;
-      if (role !== "assessor" && role !== "root" && role !== "viewer") { router.push("/login"); return; }
-      const r = await fetch("/api/vendors");
-      if (r.ok) setVendors((await r.json()).vendors);
-    })();
-  }, [router]);
-
-  // Load the selected vendor's submission; reset adjudication state on switch.
-  useEffect(() => {
-    (async () => {
-      const r = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
-      setSubmission(r.ok ? await r.json() : null);
-      setResults({});
-    })();
-  }, [vendorId]);
+  const [loadError, setLoadError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const toast = useToasts();
 
   const [selected, setSelected] = useState(CONTROLS[0].id);
   const [results, setResults] = useState<Record<string, Adjudication>>({});
   const [scanning, setScanning] = useState<Record<string, boolean>>({});
   const [runningAll, setRunningAll] = useState(false);
+  const [runProgress, setRunProgress] = useState({ done: 0, total: 0 });
   const [evidenceView, setEvidenceView] = useState<{ filename: string; text: string; keywords: string[]; method: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadError("");
+      try {
+        const meRes = await fetch("/api/me");
+        if (!meRes.ok) throw new Error(await errorMessage(meRes, "Could not verify your session."));
+        const me = await meRes.json();
+        const role = me.session?.role;
+        if (role !== "assessor" && role !== "root" && role !== "viewer") { router.push("/login"); return; }
+        const r = await fetch("/api/vendors");
+        if (!r.ok) throw new Error(await errorMessage(r, "Could not load the vendor list."));
+        if (!cancelled) { setVendors((await r.json()).vendors); setLoaded(true); }
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "Could not load the console.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [router, reloadKey]);
+
+  // Load the selected vendor's submission; reset adjudication state on switch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
+        if (cancelled) return;
+        setSubmission(r.ok ? await r.json() : null);
+        setResults({});
+      } catch {
+        if (!cancelled) { setSubmission(null); setResults({}); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [vendorId]);
 
   async function openEvidence(ev: any) {
     setEvidenceView({ filename: ev.filename, text: "", keywords: [], method: "loading" });
-    const r = await fetch(`/api/evidence?hash=${encodeURIComponent(ev.hash || "")}&controlId=${selected}`);
-    if (r.ok) setEvidenceView({ filename: ev.filename, ...(await r.json()) });
+    try {
+      const r = await fetch(`/api/evidence?hash=${encodeURIComponent(ev.hash || "")}&controlId=${selected}`);
+      if (!r.ok) throw new Error(await errorMessage(r, "Could not load this evidence file."));
+      setEvidenceView({ filename: ev.filename, ...(await r.json()) });
+    } catch (e) {
+      setEvidenceView(null);
+      toast.error(e instanceof Error ? e.message : "Could not load this evidence file.");
+    }
   }
 
   const control = CONTROLS.find((c) => c.id === selected)!;
@@ -69,42 +98,72 @@ export default function Console() {
   const review = submission?.reviews?.[selected];
   const selectedVendorName = vendors.find((v) => v.vendorId === vendorId)?.name ?? VENDOR.name;
 
-  async function adjudicate(id: string) {
-    setScanning((s) => ({ ...s, [id]: true }));
-    try {
-      const res = await fetch("/api/adjudicate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ controlId: id, vendorId }),
-      });
-      const data: Adjudication = await res.json();
-      // small delay so the "scanning" shimmer is visible (demo polish)
-      await new Promise((r) => setTimeout(r, 450));
-      setResults((m) => ({ ...m, [id]: data }));
-    } finally {
-      setScanning((s) => ({ ...s, [id]: false }));
-    }
-  }
+  const adjudicate = useCallback(
+    async (id: string): Promise<boolean> => {
+      setScanning((s) => ({ ...s, [id]: true }));
+      try {
+        const res = await fetch("/api/adjudicate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ controlId: id, vendorId }),
+        });
+        if (!res.ok) throw new Error(await errorMessage(res, `Adjudication failed for ${id}.`));
+        const data: Adjudication = await res.json();
+        setResults((m) => ({ ...m, [id]: data }));
+        return true;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `Adjudication failed for ${id}.`);
+        return false;
+      } finally {
+        setScanning((s) => ({ ...s, [id]: false }));
+      }
+    },
+    [vendorId, toast]
+  );
 
+  // Run remaining controls with bounded concurrency (4 at a time) + live progress.
   async function runAll() {
+    const pending = CONTROLS.filter((c) => !results[c.id]).map((c) => c.id);
+    if (pending.length === 0) return;
     setRunningAll(true);
-    for (const c of CONTROLS) {
-      if (!results[c.id]) await adjudicate(c.id);
+    setRunProgress({ done: 0, total: pending.length });
+    let failures = 0;
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    async function worker() {
+      while (cursor < pending.length) {
+        const id = pending[cursor++];
+        const ok = await adjudicate(id);
+        if (!ok) failures++;
+        setRunProgress((p) => ({ ...p, done: p.done + 1 }));
+      }
     }
-    setRunningAll(false);
+    try {
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker));
+      if (failures === 0) toast.success(`Adjudicated ${pending.length} controls.`);
+      else toast.error(`${failures} of ${pending.length} adjudications failed.`);
+    } finally {
+      setRunningAll(false);
+    }
   }
 
   // Return the current finding to the vendor for remediation.
   async function sendBack() {
     const r = results[selected];
     if (!r) return;
-    await fetch("/api/review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vendorId, controlId: selected, verdict: r.verdict, risk: r.risk, riskStatement: r.riskStatement, recommendations: r.recommendations }),
-    });
-    const s = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
-    if (s.ok) setSubmission(await s.json());
+    try {
+      const res = await fetch("/api/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vendorId, controlId: selected, verdict: r.verdict, risk: r.risk, riskStatement: r.riskStatement, recommendations: r.recommendations }),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not send this finding back."));
+      const s = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
+      if (s.ok) setSubmission(await s.json());
+      toast.success("Finding returned to vendor for remediation.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send this finding back.");
+    }
   }
 
   const summary = useMemo(() => {
@@ -149,6 +208,20 @@ export default function Console() {
   const consolidated = consolidatedRating(Object.values(results).filter((r) => r.verdict === "Non-Compliant").map((r) => r.risk));
   const RATING_TONE: Record<string, string> = { Good: "text-ok", Satisfactory: "text-ok", "Needs Improvement": "text-warn", Unsatisfactory: "text-danger" };
 
+  // Whether the selected vendor has any reviewable content (real or demo).
+  const hasSubmissionContent =
+    !!submission?.answers && Object.keys(submission.answers).length > 0
+      ? Object.values(submission.answers as Record<string, any>).some(
+          (a) => a?.response?.trim() || (a?.evidence?.length ?? 0) > 0 || a?.applicable === false
+        )
+      : false;
+  const hasDemoContent = vendorId === "apex" && CONTROLS.some((c) => c.demo);
+  const showEmptyState = loaded && !hasSubmissionContent && !hasDemoContent && Object.keys(results).length === 0;
+
+  if (loadError && !loaded) {
+    return <ErrorState message={loadError} onRetry={() => setReloadKey((k) => k + 1)} />;
+  }
+
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-5 pb-20">
       {/* Top bar */}
@@ -174,13 +247,14 @@ export default function Console() {
           <Link href="/portfolio" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Portfolio</Link>
           <Link href="/sbom" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">SBOM</Link>
           <Link href="/cost" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Cost</Link>
+          <Link href="/changelog" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Changelog</Link>
           <button
             onClick={runAll}
             disabled={runningAll}
             className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
           >
             <PlayCircle size={16} />
-            {runningAll ? "Adjudicating…" : "Run AI on all controls"}
+            {runningAll ? `Adjudicating… ${runProgress.done} / ${runProgress.total}` : "Run AI on all controls"}
           </button>
           <ThemeToggle />
           <button
@@ -206,7 +280,7 @@ export default function Console() {
               <div className="mt-0.5 text-sm text-muted">{submission?.status === "submitted" ? "Submitted for review" : "Assessment in progress"}</div>
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-4 gap-3">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat value={summary.assessed} label="Assessed" />
             <Stat value={summary.compliant} label="Compliant" tone="ok" />
             <Stat value={summary.nc} label="Non-Compliant" tone="danger" />
@@ -251,9 +325,9 @@ export default function Console() {
         </div>
       </section>
 
-      <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
-        {/* Control list */}
-        <aside className="space-y-3 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto lg:pr-1">
+      <div className="grid gap-5 md:grid-cols-[260px_1fr] lg:grid-cols-[300px_1fr]">
+        {/* Control list — caps height & scrolls on every breakpoint so the detail pane stays reachable */}
+        <aside className="max-h-[40vh] space-y-3 overflow-y-auto pr-1 md:max-h-[calc(100vh-7rem)]">
           {groups.map(([family, items]) => (
             <div key={family}>
               <div className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
@@ -295,6 +369,17 @@ export default function Console() {
 
         {/* Detail */}
         <section className="space-y-5">
+          {showEmptyState && (
+            <div className="glass flex flex-col items-center rounded-2xl p-10 text-center">
+              <div className="mb-3 grid h-12 w-12 place-items-center rounded-full border border-border bg-surface-2/60 text-muted">
+                <Inbox size={22} />
+              </div>
+              <h3 className="text-base font-semibold">No submission yet from {selectedVendorName}</h3>
+              <p className="mt-1 max-w-sm text-sm text-muted">
+                This vendor has not answered any controls or attached evidence. You can still browse the control library and run AI adjudication once they submit.
+              </p>
+            </div>
+          )}
           <motion.div key={control.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
             <div className="glass rounded-2xl p-5">
               <div className="flex flex-wrap items-center gap-2">
@@ -400,8 +485,8 @@ export default function Console() {
                   </div>
                 )}
 
-                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-muted">
-                  <Quote size={11} /> {result.citations.join(" · ")}
+                <div className="mt-3 flex items-center gap-1.5 text-xs text-muted">
+                  <Quote size={12} /> {result.citations.join(" · ")}
                 </div>
 
                 {/* remediation action */}
@@ -430,42 +515,119 @@ export default function Console() {
             <TracerGraph control={control} frameworks={FRAMEWORKS} verdict={result?.verdict} active={!!result} />
           </div>
 
-          {/* Evidence viewer with highlighted matches */}
-          {evidenceView && (
-            <div className="glass rounded-2xl p-5">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-semibold">📎 {evidenceView.filename}</span>
-                <button onClick={() => setEvidenceView(null)} className="text-xs text-muted hover:text-fg">close</button>
-              </div>
-              {evidenceView.method === "loading" ? (
-                <p className="text-xs text-muted">Loading…</p>
-              ) : evidenceView.text ? (
-                <>
-                  <p className="mb-2 text-[11px] text-muted">Extracted via {evidenceView.method} · matched terms highlighted</p>
-                  <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2/40 p-3 text-xs leading-relaxed">
-                    <Highlighted text={evidenceView.text} keywords={evidenceView.keywords} />
-                  </div>
-                </>
-              ) : (
-                <p className="text-xs italic text-muted">No readable text extracted from this file.</p>
-              )}
-            </div>
-          )}
         </section>
       </div>
+
+      {/* Evidence viewer — real modal dialog */}
+      <EvidenceDialog view={evidenceView} onClose={() => setEvidenceView(null)} />
+
+      <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
     </main>
+  );
+}
+
+function EvidenceDialog({
+  view,
+  onClose,
+}: {
+  view: { filename: string; text: string; keywords: string[]; method: string } | null;
+  onClose: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const restoreRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!view) return;
+    // remember what had focus, then move focus to the close button
+    restoreRef.current = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      if (e.key !== "Tab") return;
+      // basic focus trap within the panel
+      const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusables || focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      restoreRef.current?.focus?.();
+    };
+  }, [view, onClose]);
+
+  return (
+    <AnimatePresence>
+      {view && (
+        <motion.div
+          className="fixed inset-0 z-40 grid place-items-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <div className="absolute inset-0 bg-bg/70 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
+          <motion.div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="evidence-title"
+            initial={{ opacity: 0, scale: 0.97, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.97 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="glass relative z-10 w-full max-w-2xl rounded-2xl p-5 shadow-glow"
+          >
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span id="evidence-title" className="truncate text-sm font-semibold">📎 {view.filename}</span>
+              <button
+                ref={closeRef}
+                onClick={onClose}
+                className="rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-fg"
+              >
+                Close
+              </button>
+            </div>
+            {view.method === "loading" ? (
+              <p className="text-xs text-muted">Loading…</p>
+            ) : view.text ? (
+              <>
+                <p className="mb-2 text-xs text-muted">Extracted via {view.method} · matched terms highlighted</p>
+                <div className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2/40 p-3 text-xs leading-relaxed">
+                  <Highlighted text={view.text} keywords={view.keywords} />
+                </div>
+              </>
+            ) : (
+              <p className="text-xs italic text-muted">No readable text extracted from this file.</p>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
 function Highlighted({ text, keywords }: { text: string; keywords: string[] }) {
   if (!keywords.length) return <>{text}</>;
-  const re = new RegExp(`(${keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
-  const kset = new Set(keywords.map((k) => k.toLowerCase()));
-  return (
-    <>
-      {text.split(re).map((p, i) => (kset.has(p.toLowerCase()) ? <mark key={i} className="rounded bg-warn/40 px-0.5 text-fg">{p}</mark> : <span key={i}>{p}</span>))}
-    </>
-  );
+  // A malformed keyword must never crash the viewer — fall back to plain text.
+  try {
+    const re = new RegExp(`(${keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+    const kset = new Set(keywords.map((k) => k.toLowerCase()));
+    return (
+      <>
+        {text.split(re).map((p, i) => (kset.has(p.toLowerCase()) ? <mark key={i} className="rounded bg-warn/40 px-0.5 text-fg">{p}</mark> : <span key={i}>{p}</span>))}
+      </>
+    );
+  } catch {
+    return <>{text}</>;
+  }
 }
 
 function Panel({ icon: Icon, title, children }: { icon: any; title: string; children: React.ReactNode }) {

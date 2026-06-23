@@ -4,9 +4,11 @@ import type { Adjudication } from "@/data/types";
 import { getSubmission } from "@/lib/store";
 import { getSettings } from "@/lib/settings";
 import { adjudicate, staticAdjudicate, type EffAnswer } from "@/lib/adjudicator";
-import { getExtractionByHash } from "@/lib/extract";
+import { getExtractionByHash, relevantExcerpt } from "@/lib/extract";
+import { keywords } from "@/lib/keywords";
 import { currentSession, can } from "@/lib/auth";
 import { audit } from "@/lib/audit";
+import { readJson } from "@/lib/http";
 
 export const runtime = "nodejs";
 
@@ -32,24 +34,30 @@ export async function POST(req: NextRequest) {
   if (!can(session?.role, "adjudicate:run")) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const { controlId, vendorId = "apex" } = await req.json();
+  const parsed = await readJson<{ controlId?: string; vendorId?: string }>(req);
+  if ("error" in parsed) return parsed.error;
+  const { controlId, vendorId = "apex" } = parsed.data;
   const c = CONTROLS.find((x) => x.id === controlId);
   if (!c) return NextResponse.json({ error: "unknown control" }, { status: 404 });
 
-  audit(session!.username, "adjudicated control", `${controlId} · ${vendorId}`);
-  const stored = getSubmission(vendorId).answers[controlId];
+  audit(session!.username, "adjudicated control", `${c.id} · ${vendorId}`);
+  const stored = getSubmission(vendorId).answers[c.id];
   const hasRealSubmission = !!stored && (!!stored.response || (stored.evidence?.length ?? 0) > 0 || stored.applicable === false);
 
   // Live vendor submission -> run the Root-configured processing backend.
   if (hasRealSubmission) {
-    const evidenceText = (stored.evidence ?? [])
-      .map((e) => getExtractionByHash(e.hash)?.text || "")
+    // Pull the windows most relevant to this control's RFI rather than just the
+    // head of each document (so the substantiating section deep in a long report
+    // isn't truncated away). Lightweight retrieval; see lib/extract.relevantExcerpt.
+    const kw = keywords(c.rfi);
+    const fullText = (stored.evidence ?? [])
+      .map((e: { hash?: string }) => getExtractionByHash(e.hash)?.text || "")
       .filter(Boolean)
-      .join("\n\n")
-      .slice(0, 12000);
+      .join("\n\n");
+    const evidenceText = relevantExcerpt(fullText, kw, 12000);
     const eff: EffAnswer = {
       response: stored.response,
-      evidence: (stored.evidence ?? []).map((e) => e.filename).join(", "),
+      evidence: (stored.evidence ?? []).map((e: { filename: string }) => e.filename).join(", "),
       evidenceText,
       evidenceCount: stored.evidence?.length ?? 0,
       applicable: stored.applicable,

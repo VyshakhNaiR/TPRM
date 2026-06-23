@@ -18,19 +18,31 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     setError("");
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      setError("Invalid credentials");
-      return;
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        let msg = "Invalid credentials";
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch {
+          /* not JSON */
+        }
+        setError(msg);
+        return;
+      }
+      const { session } = await res.json();
+      const landing: Record<string, string> = { root: "/admin", viewer: "/admin", assessor: "/console", vendor: "/vendor" };
+      router.push(landing[session.role] ?? "/console");
+    } catch {
+      setError("Network error — could not reach the server. Please try again.");
+    } finally {
+      setBusy(false);
     }
-    const { session } = await res.json();
-    const landing: Record<string, string> = { root: "/admin", viewer: "/admin", assessor: "/console", vendor: "/vendor" };
-    router.push(landing[session.role] ?? "/console");
   }
 
   function quick(u: string) {
@@ -51,22 +63,30 @@ export default function Login() {
           <AnimatedLogo width={150} />
         </div>
         <form onSubmit={submit} className="space-y-3">
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Username"
-            autoComplete="username"
-            className="w-full rounded-xl border border-border bg-surface/60 px-4 py-2.5 text-sm outline-none focus:border-brand"
-          />
-          <input
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
-            type="password"
-            autoComplete="current-password"
-            className="w-full rounded-xl border border-border bg-surface/60 px-4 py-2.5 text-sm outline-none focus:border-brand"
-          />
-          {error && <p className="text-xs text-danger">{error}</p>}
+          <div>
+            <label htmlFor="login-username" className="mb-1 block text-xs font-medium text-muted">Username</label>
+            <input
+              id="login-username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username"
+              autoComplete="username"
+              className="w-full rounded-xl border border-border bg-surface/60 px-4 py-2.5 text-sm outline-none focus:border-brand"
+            />
+          </div>
+          <div>
+            <label htmlFor="login-password" className="mb-1 block text-xs font-medium text-muted">Password</label>
+            <input
+              id="login-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              type="password"
+              autoComplete="current-password"
+              className="w-full rounded-xl border border-border bg-surface/60 px-4 py-2.5 text-sm outline-none focus:border-brand"
+            />
+          </div>
+          {error && <p role="alert" className="text-xs text-danger">{error}</p>}
           <button
             disabled={busy}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"

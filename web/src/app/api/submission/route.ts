@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentSession } from "@/lib/auth";
-import { getSubmission, saveAnswer, submitAll } from "@/lib/store";
+import { getSubmission, saveAnswer, submitAll, type Answer } from "@/lib/store";
+import { CONTROLS } from "@/data/seed";
+import { readJson, asBool } from "@/lib/http";
 
 export const runtime = "nodejs";
+
+const MAX_RESPONSE_CHARS = 20_000;
 
 // Vendors act on their own submission; assessors may read a vendor's (?vendorId=).
 async function resolveVendorId(req: NextRequest, write: boolean) {
@@ -23,17 +27,25 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const r = await resolveVendorId(req, true);
   if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.error === "unauthenticated" ? 401 : 403 });
-  const { controlId, response, applicable, justification } = await req.json();
-  if (!controlId) return NextResponse.json({ error: "controlId required" }, { status: 400 });
-  const patch: any = {};
-  if (response !== undefined) patch.response = response;
-  if (applicable !== undefined) patch.applicable = applicable;
-  if (justification !== undefined) patch.justification = justification;
-  return NextResponse.json(saveAnswer(r.vendorId, controlId, patch));
+  const parsed = await readJson<{ controlId?: string; response?: unknown; applicable?: unknown; justification?: unknown }>(req);
+  if ("error" in parsed) return parsed.error;
+  const { controlId, response, applicable, justification } = parsed.data;
+  if (!controlId || !CONTROLS.some((c) => c.id === controlId)) {
+    return NextResponse.json({ error: "valid controlId required" }, { status: 400 });
+  }
+  const patch: Partial<Answer> = {};
+  if (response !== undefined) patch.response = String(response ?? "").slice(0, MAX_RESPONSE_CHARS);
+  if (applicable !== undefined) {
+    const b = asBool(applicable);
+    if (b === undefined) return NextResponse.json({ error: "applicable must be a boolean" }, { status: 400 });
+    patch.applicable = b;
+  }
+  if (justification !== undefined) patch.justification = String(justification ?? "").slice(0, MAX_RESPONSE_CHARS);
+  return NextResponse.json(await saveAnswer(r.vendorId, controlId, patch));
 }
 
 export async function PUT(req: NextRequest) {
   const r = await resolveVendorId(req, true);
   if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.error === "unauthenticated" ? 401 : 403 });
-  return NextResponse.json(submitAll(r.vendorId));
+  return NextResponse.json(await submitAll(r.vendorId));
 }

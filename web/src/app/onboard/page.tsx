@@ -35,10 +35,20 @@ export default function Onboard() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError("");
-    const res = await fetch("/api/onboard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
-    setBusy(false);
-    if (!res.ok) { setError((await res.json()).error || "Onboarding failed."); return; }
-    router.push("/vendor");
+    try {
+      const res = await fetch("/api/onboard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
+      if (!res.ok) {
+        let msg = "Onboarding failed.";
+        try { const d = await res.json(); if (d?.error) msg = d.error; } catch { /* not JSON */ }
+        setError(msg);
+        return;
+      }
+      router.push("/vendor");
+    } catch {
+      setError("Network error — could not reach the server. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

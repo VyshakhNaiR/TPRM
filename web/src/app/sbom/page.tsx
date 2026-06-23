@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, UploadCloud, Loader2, Package } from "lucide-react";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Toaster, errorMessage, useToasts } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 export default function SbomAnalyzer() {
@@ -13,22 +14,39 @@ export default function SbomAnalyzer() {
   const [report, setReport] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const toast = useToasts();
 
   useEffect(() => {
     (async () => {
-      const me = await (await fetch("/api/me")).json();
-      const role = me.session?.role;
-      if (role !== "assessor" && role !== "root" && role !== "viewer") router.push("/login");
+      try {
+        const me = await (await fetch("/api/me")).json();
+        const role = me.session?.role;
+        if (role !== "assessor" && role !== "root" && role !== "viewer") router.push("/login");
+      } catch {
+        router.push("/login");
+      }
     })();
   }, [router]);
 
   async function upload(file: File) {
     setBusy(true);
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch("/api/sbom", { method: "POST", body: fd });
-    setReport(await res.json());
-    setBusy(false);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/sbom", { method: "POST", body: fd });
+      if (!res.ok) {
+        // server may still return JSON {error} with a non-2xx — prefer that
+        let parsed: any = null;
+        try { parsed = await res.clone().json(); } catch { /* not JSON */ }
+        if (parsed && typeof parsed === "object") { setReport(parsed); }
+        throw new Error(await errorMessage(res, "Could not parse the SBOM."));
+      }
+      setReport(await res.json());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not parse the SBOM.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -89,6 +107,7 @@ export default function SbomAnalyzer() {
           </div>
         </div>
       )}
+      <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
     </main>
   );
 }

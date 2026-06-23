@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2 } from "lucide-react";
@@ -8,7 +8,10 @@ import { CONTROLS } from "@/data/seed";
 import type { Submission } from "@/lib/store";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ErrorState, Toaster, errorMessage, useToasts } from "@/components/ui";
 import { cn } from "@/lib/utils";
+
+type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
 export default function VendorPortal() {
   const router = useRouter();
@@ -17,19 +20,41 @@ export default function VendorPortal() {
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const toast = useToasts();
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      const me = await (await fetch("/api/me")).json();
-      if (!me.session || me.session.role !== "vendor") {
-        router.push("/login");
-        return;
+      setLoadError("");
+      try {
+        const meRes = await fetch("/api/me");
+        if (!meRes.ok) throw new Error(await errorMessage(meRes, "Could not verify your session."));
+        const me = await meRes.json();
+        if (!me.session || me.session.role !== "vendor") {
+          router.push("/login");
+          return;
+        }
+        if (cancelled) return;
+        setName(me.session.name);
+        const subRes = await fetch("/api/submission");
+        if (!subRes.ok) throw new Error(await errorMessage(subRes, "Could not load your questionnaire."));
+        const data = await subRes.json();
+        if (!cancelled) setSub(data);
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "Could not load your questionnaire.");
       }
-      setName(me.session.name);
-      setSub(await (await fetch("/api/submission")).json());
     })();
-  }, [router]);
+    return () => { cancelled = true; };
+  }, [router, reloadKey]);
+
+  // flush any pending debounced autosave timers on unmount
+  useEffect(() => () => { Object.values(debounceTimers.current).forEach(clearTimeout); }, []);
 
   const groups = useMemo(() => {
     const m = new Map<string, typeof CONTROLS>();
@@ -46,37 +71,92 @@ export default function VendorPortal() {
   const submitted = sub?.status === "submitted";
   const needsAttention = Object.values((sub?.reviews ?? {}) as Record<string, { status: string }>).filter((r) => r.status === "open").length;
 
-  async function save(controlId: string, patch: { response?: string; applicable?: boolean }) {
-    setSaving((s) => ({ ...s, [controlId]: true }));
-    const res = await fetch("/api/submission", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ controlId, ...patch }),
-    });
-    if (res.ok) setSub(await res.json());
-    setSaving((s) => ({ ...s, [controlId]: false }));
+  const save = useCallback(
+    async (controlId: string, patch: { response?: string; applicable?: boolean }) => {
+      setSaving((s) => ({ ...s, [controlId]: true }));
+      setSaveState("saving");
+      try {
+        const res = await fetch("/api/submission", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ controlId, ...patch }),
+        });
+        if (!res.ok) throw new Error(await errorMessage(res, "Could not save your answer."));
+        setSub(await res.json());
+        setSaveState("saved");
+        setSavedAt(new Date());
+      } catch (e) {
+        setSaveState("error");
+        toast.error(e instanceof Error ? e.message : "Could not save your answer.");
+      } finally {
+        setSaving((s) => ({ ...s, [controlId]: false }));
+      }
+    },
+    [toast]
+  );
+
+  // Debounced autosave for the free-text response (~1.5s after typing stops).
+  const queueAutosave = useCallback(
+    (controlId: string, value: string) => {
+      setSaveState("dirty");
+      if (debounceTimers.current[controlId]) clearTimeout(debounceTimers.current[controlId]);
+      debounceTimers.current[controlId] = setTimeout(() => {
+        delete debounceTimers.current[controlId];
+        save(controlId, { response: value });
+      }, 1500);
+    },
+    [save]
+  );
+
+  // Cancel a pending autosave (e.g. when blur-save fires first).
+  function cancelAutosave(controlId: string) {
+    if (debounceTimers.current[controlId]) {
+      clearTimeout(debounceTimers.current[controlId]);
+      delete debounceTimers.current[controlId];
+    }
   }
 
   async function upload(controlId: string, file: File) {
     setUploading((s) => ({ ...s, [controlId]: true }));
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("controlId", controlId);
-    const res = await fetch("/api/upload", { method: "POST", body: fd });
-    if (res.ok) setSub((await res.json()).submission);
-    setUploading((s) => ({ ...s, [controlId]: false }));
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("controlId", controlId);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await errorMessage(res, "Upload failed."));
+      setSub((await res.json()).submission);
+      toast.success(`Uploaded ${file.name}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setUploading((s) => ({ ...s, [controlId]: false }));
+    }
   }
 
   async function submitAll() {
     setSubmitting(true);
-    const res = await fetch("/api/submission", { method: "PUT" });
-    if (res.ok) setSub(await res.json());
-    setSubmitting(false);
+    try {
+      const res = await fetch("/api/submission", { method: "PUT" });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not submit for review."));
+      setSub(await res.json());
+      toast.success("Questionnaire submitted for review.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not submit for review.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function logout() {
-    await fetch("/api/logout", { method: "POST" });
-    router.push("/login");
+    try {
+      await fetch("/api/logout", { method: "POST" });
+    } finally {
+      router.push("/login");
+    }
+  }
+
+  if (loadError && !sub) {
+    return <ErrorState message={loadError} onRetry={() => setReloadKey((k) => k + 1)} />;
   }
 
   if (!sub) {
@@ -100,6 +180,7 @@ export default function VendorPortal() {
           <div>
             <h1 className="text-lg font-bold">Security Questionnaire</h1>
             <p className="text-sm text-muted">{answered} of {CONTROLS.length} answered · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
+            <SaveIndicator state={saveState} savedAt={savedAt} />
           </div>
           <button
             onClick={submitAll}
@@ -139,16 +220,16 @@ export default function VendorPortal() {
                     </div>
 
                     {rev && rev.status === "open" && (
-                      <div className="mt-2 rounded-lg border border-danger/40 bg-danger/10 p-2 text-[11px]">
+                      <div className="mt-2 rounded-lg border border-danger/40 bg-danger/10 p-2 text-xs">
                         <div className="font-semibold text-danger">↩ Returned for remediation — {rev.verdict}</div>
                         {rev.riskStatement && <p className="mt-0.5 text-muted">{rev.riskStatement}</p>}
                         {(rev.recommendations ?? []).slice(0, 3).map((r: string, i: number) => <p key={i} className="mt-0.5 text-muted">▸ {r}</p>)}
                         <p className="mt-1 font-medium text-fg">Update your response / evidence below and it will be resubmitted.</p>
                       </div>
                     )}
-                    {rev && rev.status === "resubmitted" && <div className="mt-2 text-[11px] font-medium text-ok">✓ Resubmitted — awaiting assessor re-review.</div>}
+                    {rev && rev.status === "resubmitted" && <div className="mt-2 text-xs font-medium text-ok">✓ Resubmitted — awaiting assessor re-review.</div>}
 
-                    <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-surface-2/50 p-2 text-[11px] text-muted">
+                    <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-surface-2/50 p-2 text-xs text-muted">
                       <FileText size={12} className="mt-0.5 shrink-0" /><span>{c.rfi}</span>
                     </div>
 
@@ -164,10 +245,13 @@ export default function VendorPortal() {
 
                     {!na && (
                       <>
+                        <label htmlFor={`response-${c.id}`} className="sr-only">Response for {c.id}</label>
                         <textarea
+                          id={`response-${c.id}`}
                           defaultValue={a?.response ?? ""}
                           disabled={locked}
-                          onBlur={(e) => { if (e.target.value !== (a?.response ?? "")) save(c.id, { response: e.target.value }); }}
+                          onChange={(e) => { if (!locked) queueAutosave(c.id, e.target.value); }}
+                          onBlur={(e) => { cancelAutosave(c.id); if (!locked && e.target.value !== (a?.response ?? "")) save(c.id, { response: e.target.value }); }}
                           placeholder="Your response…"
                           rows={2}
                           className="mt-2 w-full resize-y rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand"
@@ -177,6 +261,7 @@ export default function VendorPortal() {
                             ref={(el) => { fileRefs.current[c.id] = el; }}
                             type="file"
                             hidden
+                            aria-label={`Attach evidence for ${c.id}`}
                             onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(c.id, f); e.target.value = ""; }}
                           />
                           <button
@@ -202,6 +287,22 @@ export default function VendorPortal() {
           </section>
         ))}
       </div>
+      <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
     </main>
   );
+}
+
+function SaveIndicator({ state, savedAt }: { state: SaveState; savedAt: Date | null }) {
+  if (state === "idle") return null;
+  const time = savedAt
+    ? savedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+  const map: Record<Exclude<SaveState, "idle">, { text: string; cls: string }> = {
+    dirty: { text: "Unsaved changes", cls: "text-warn" },
+    saving: { text: "Saving…", cls: "text-muted" },
+    saved: { text: time ? `Saved · ${time}` : "Saved", cls: "text-ok" },
+    error: { text: "Save failed — retrying on next change", cls: "text-danger" },
+  };
+  const { text, cls } = map[state];
+  return <p className={cn("mt-0.5 text-xs font-medium", cls)} aria-live="polite">{text}</p>;
 }

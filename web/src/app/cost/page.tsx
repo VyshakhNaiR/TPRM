@@ -29,8 +29,12 @@ export default function CostDashboard() {
 
   useEffect(() => {
     (async () => {
-      const me = await (await fetch("/api/me")).json();
-      if (!me.session) router.push("/login");
+      try {
+        const me = await (await fetch("/api/me")).json();
+        if (!me.session) router.push("/login");
+      } catch {
+        router.push("/login");
+      }
     })();
   }, [router]);
 
@@ -51,8 +55,8 @@ export default function CostDashboard() {
       <div className="mb-5 flex items-center gap-2"><Wallet size={18} className="text-brand" /><h1 className="text-lg font-bold">AI processing cost</h1></div>
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <label className="rounded-2xl border border-border bg-surface/60 p-4 text-xs">Vendors
-          <input type="number" value={vendors} onChange={(e) => setVendors(Math.max(1, Number(e.target.value) || 0))} className="mt-1 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-brand" />
+        <label htmlFor="cost-vendors" className="rounded-2xl border border-border bg-surface/60 p-4 text-xs">Vendors
+          <input id="cost-vendors" type="number" value={vendors} onChange={(e) => setVendors(Math.max(1, Number(e.target.value) || 0))} className="mt-1 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-brand" />
         </label>
         <Stat value={controls} label="controls each" />
         <Stat value={adjudications.toLocaleString()} label="adjudications / round" />
@@ -83,7 +87,7 @@ export default function CostDashboard() {
         <p className="font-semibold text-ok">A full assessment of all {vendors} vendors costs about {fmt(adjudications * SONNET_OPT)} on cost-optimized AI — and {fmt(0)} on the static or local engines.</p>
         <p className="mt-1 text-xs text-muted">Re-assessments cost even less: a content-hash result cache skips unchanged controls (~$0.10/vendor for a 10%-changed reassessment). With a hard monthly spend cap, there is no scenario that creates a financial hole.</p>
       </div>
-      <p className="mt-3 text-center text-[11px] text-muted">Based on verified Anthropic pricing (Opus $5/$25, Sonnet $3/$15 per MTok; cache read 0.1×; batch 50% off). Token shape: 8k shared + 2k variable in, 400 out per control.</p>
+      <p className="mt-3 text-center text-xs text-muted">Based on verified Anthropic pricing (Opus $5/$25, Sonnet $3/$15 per MTok; cache read 0.1×; batch 50% off). Token shape: 8k shared + 2k variable in, 400 out per control.</p>
     </main>
   );
 }

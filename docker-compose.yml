@@ -1,15 +1,26 @@
 # One-command local stack: `docker compose up`.
 # Portable by design — migrate to any host by moving env vars; Postgres+pgvector
 # is included now so Phase 2/3 (persistence + RAG) drop in without re-architecting.
+#
+# Secrets are sourced from the environment / .env (see .env.example). For the demo
+# they fall back to safe local defaults; for production set them explicitly:
+#   SESSION_SECRET (required), POSTGRES_PASSWORD, ENCRYPTION_KEY.
 services:
   web:
     build: ./web
     ports:
       - "3000:3000"
     environment:
+      NODE_ENV: production
+      # Required in production — generate with: openssl rand -hex 32
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set (openssl rand -hex 32)}
+      # Encrypts provider API keys at rest; defaults to SESSION_SECRET if unset.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      # Seeded demo accounts (root/dbs/apex/viewer) are OFF in prod unless opted in.
+      ALLOW_DEMO_ACCOUNTS: ${ALLOW_DEMO_ACCOUNTS:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
-      DATABASE_URL: postgres://tprm:tprm@db:5432/tprm
+      DATABASE_URL: postgres://tprm:${POSTGRES_PASSWORD:-tprm}@db:5432/tprm
     depends_on:
       - db
 
@@ -17,10 +28,12 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: tprm
-      POSTGRES_PASSWORD: tprm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tprm}
       POSTGRES_DB: tprm
+    # Bind to loopback only — the DB is reachable from the web container over the
+    # compose network; do NOT expose it on all host interfaces.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 

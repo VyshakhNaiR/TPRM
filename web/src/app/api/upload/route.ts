@@ -4,6 +4,8 @@ import { addEvidence } from "@/lib/store";
 import { saveUpload } from "@/lib/storage";
 import { extractFile } from "@/lib/extract";
 import { getSettings } from "@/lib/settings";
+import { validateUpload } from "@/lib/filetypes";
+import { CONTROLS } from "@/data/seed";
 
 export const runtime = "nodejs";
 
@@ -13,18 +15,34 @@ export async function POST(req: NextRequest) {
   const s = await currentSession();
   if (!s || s.role !== "vendor") return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-  const form = await req.formData();
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return NextResponse.json({ error: "invalid form data" }, { status: 400 });
+  }
   const file = form.get("file") as File | null;
   const controlId = form.get("controlId") as string | null;
   if (!file || !controlId) return NextResponse.json({ error: "file and controlId required" }, { status: 400 });
+  // Only accept evidence against a real control (no arbitrary store keys).
+  if (!CONTROLS.some((c) => c.id === controlId)) return NextResponse.json({ error: "unknown control" }, { status: 404 });
 
   const bytes = Buffer.from(await file.arrayBuffer());
-  if (bytes.length > MAX_BYTES) return NextResponse.json({ error: "file too large" }, { status: 413 });
+  if (bytes.length === 0) return NextResponse.json({ error: "empty file" }, { status: 400 });
+  if (bytes.length > MAX_BYTES) return NextResponse.json({ error: "file too large (max 25MB)" }, { status: 413 });
+
+  // Extension allow-list + magic-byte check before any parser touches the bytes.
+  const typeErr = validateUpload(file.name, bytes);
+  if (typeErr) return NextResponse.json({ error: typeErr }, { status: 415 });
 
   const ev = await saveUpload(s.vendorId!, file.name, bytes);
   // Deterministically extract + cache the file's text (shared by static + AI engines).
   const extraction = await extractFile(file.name, bytes, { ocr: getSettings().static.ocrEnabled });
   const record = { ...ev, hash: extraction.hash, textChars: extraction.chars };
-  const submission = addEvidence(s.vendorId!, controlId, record);
-  return NextResponse.json({ evidence: record, extracted: { method: extraction.method, chars: extraction.chars }, submission });
+  const submission = await addEvidence(s.vendorId!, controlId, record);
+  return NextResponse.json({
+    evidence: record,
+    extracted: { method: extraction.method, chars: extraction.chars, status: extraction.status },
+    submission,
+  });
 }

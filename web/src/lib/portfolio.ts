@@ -38,14 +38,20 @@ function ratingFor(posture: number): string {
 }
 
 export function buildPortfolio() {
-  const vendors = DEMO_VENDORS.map((v) => ({ ...v }));
+  const vendors: any[] = DEMO_VENDORS.map((v) => ({ ...v }));
 
   // append real onboarded vendors (lightweight verdict from their submission)
   for (const ov of listVendors()) {
     const sub = getSubmission(ov.vendorId);
-    const rate = 0.7; // not used for real; verdicts derived from answers below
-    vendors.push({ id: ov.vendorId, name: ov.name, tier: ov.profile.tier || "Unrated", rate, cloud: "—", region: ov.profile.country || "—" } as any);
-    (vendors[vendors.length - 1] as any)._real = sub;
+    vendors.push({
+      id: ov.vendorId,
+      name: ov.name,
+      tier: ov.profile.tier || "Unrated",
+      rate: 0.7, // unused for real vendors; verdicts derived from answers below
+      cloud: "—",
+      region: ov.profile.country || "—",
+      _real: sub, // constructed in one shot (no post-push mutation)
+    });
   }
 
   // verdict matrix

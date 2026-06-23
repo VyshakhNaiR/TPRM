@@ -1,9 +1,12 @@
 import fs from "fs";
 import path from "path";
+import { withLock } from "./lock";
 
 // File-backed persistence (JSON per vendor). Works instantly for the demo and is
-// fine for small scale. PRODUCTION: replace this module with a Postgres/Drizzle
-// implementation exporting the same functions — callers don't change.
+// fine for small scale. Writes are serialized per-vendor (see lib/lock) so
+// concurrent requests don't lose data (last-write-wins). PRODUCTION: replace this
+// module with a Postgres/Drizzle implementation exporting the same functions —
+// callers don't change.
 const DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const SUBM = path.join(DIR, "submissions");
 
@@ -59,7 +62,12 @@ export function getSubmission(vendorId: string): Submission {
 }
 function write(s: Submission) {
   ensure();
-  fs.writeFileSync(fp(s.vendorId), JSON.stringify(s, null, 2));
+  // Atomic-ish write: write to a temp file then rename, so a crash mid-write
+  // can't leave a half-written (unparseable) submission file.
+  const target = fp(s.vendorId);
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
+  fs.renameSync(tmp, target);
 }
 function blankAnswer(): Answer {
   return { response: "", applicable: true, evidence: [], updatedAt: now() };
@@ -68,37 +76,72 @@ function blankAnswer(): Answer {
 function touchReview(s: Submission, controlId: string) {
   if (s.reviews?.[controlId]?.status === "open") s.reviews[controlId].status = "resubmitted";
 }
-export function saveAnswer(vendorId: string, controlId: string, patch: Partial<Answer>): Submission {
-  const s = getSubmission(vendorId);
-  s.answers[controlId] = { ...(s.answers[controlId] ?? blankAnswer()), ...patch, updatedAt: now() };
-  touchReview(s, controlId);
-  s.updatedAt = now();
-  write(s);
-  return s;
+
+export function saveAnswer(vendorId: string, controlId: string, patch: Partial<Answer>): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    s.answers[controlId] = { ...(s.answers[controlId] ?? blankAnswer()), ...patch, updatedAt: now() };
+    touchReview(s, controlId);
+    s.updatedAt = now();
+    write(s);
+    return s;
+  });
 }
-export function addEvidence(vendorId: string, controlId: string, ev: Evidence): Submission {
-  const s = getSubmission(vendorId);
-  const a = s.answers[controlId] ?? blankAnswer();
-  a.evidence = [...(a.evidence ?? []), ev];
-  a.updatedAt = now();
-  s.answers[controlId] = a;
-  touchReview(s, controlId);
-  s.updatedAt = now();
-  write(s);
-  return s;
+export function addEvidence(vendorId: string, controlId: string, ev: Evidence): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    const a = s.answers[controlId] ?? blankAnswer();
+    a.evidence = [...(a.evidence ?? []), ev];
+    a.updatedAt = now();
+    s.answers[controlId] = a;
+    touchReview(s, controlId);
+    s.updatedAt = now();
+    write(s);
+    return s;
+  });
 }
-export function setReview(vendorId: string, controlId: string, r: { verdict: string; risk: string; riskStatement: string; recommendations: string[] }): Submission {
-  const s = getSubmission(vendorId);
-  s.reviews ??= {};
-  s.reviews[controlId] = { ...r, status: "open", reviewedAt: now() };
-  s.updatedAt = now();
-  write(s);
-  return s;
+export function setReview(vendorId: string, controlId: string, r: { verdict: string; risk: string; riskStatement: string; recommendations: string[] }): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    s.reviews ??= {};
+    s.reviews[controlId] = { ...r, status: "open", reviewedAt: now() };
+    s.updatedAt = now();
+    write(s);
+    return s;
+  });
 }
-export function submitAll(vendorId: string): Submission {
-  const s = getSubmission(vendorId);
-  s.status = "submitted";
-  s.submittedAt = now();
-  write(s);
-  return s;
+export function submitAll(vendorId: string): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    s.status = "submitted";
+    s.submittedAt = now();
+    write(s);
+    return s;
+  });
+}
+
+// Authorization helper: confirm an extraction hash was actually uploaded as
+// evidence in some submission before its extracted text is served. Prevents a
+// hash-oracle that would let a caller pull arbitrary cached extractions by
+// guessing/knowing content hashes. Returns the owning vendorId, or null.
+export function evidenceHashOwner(hash: string): string | null {
+  if (!hash) return null;
+  ensure();
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(SUBM).filter((f) => f.endsWith(".json"));
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    try {
+      const s: Submission = JSON.parse(fs.readFileSync(path.join(SUBM, f), "utf8"));
+      for (const a of Object.values(s.answers || {})) {
+        if ((a.evidence || []).some((e) => e.hash === hash)) return s.vendorId;
+      }
+    } catch {
+      /* skip unreadable file */
+    }
+  }
+  return null;
 }

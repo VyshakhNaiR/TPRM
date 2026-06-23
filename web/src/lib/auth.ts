@@ -1,11 +1,14 @@
 import crypto from "crypto";
 import { cookies } from "next/headers";
 import { verifyStored } from "./users";
+import { sessionSecret, ALLOW_DEMO_ACCOUNTS } from "./config";
 
 // Lightweight signed-cookie sessions. PRODUCTION: swap this module for an IdP /
 // Auth.js with MFA — the rest of the app only depends on currentSession()/verify()/can().
-const SECRET = process.env.SESSION_SECRET || "dev-only-secret-change-me";
+// The signing secret is resolved lazily (see config.sessionSecret) so prod fails
+// loudly if it isn't set, while the demo runs with a safe dev default.
 export const SESSION_COOKIE = "ni_session";
+export const SESSION_TTL_SEC = 60 * 60 * 8; // 8h
 
 export type Role = "root" | "assessor" | "vendor" | "viewer";
 
@@ -14,6 +17,7 @@ export interface Session {
   role: Role;
   vendorId?: string;
   name: string;
+  exp?: number; // unix seconds; set at encode time, enforced at decode time
 }
 
 // Permissions — what each role may do.
@@ -59,25 +63,54 @@ export const LANDING: Record<Role, string> = {
 };
 
 function sign(data: string) {
-  return crypto.createHmac("sha256", SECRET).update(data).digest("base64url");
+  return crypto.createHmac("sha256", sessionSecret()).update(data).digest("base64url");
+}
+// Timing-safe HMAC comparison.
+function sigValid(payload: string, sig: string): boolean {
+  const expected = sign(payload);
+  if (expected.length !== sig.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
+  } catch {
+    return false;
+  }
 }
 export function encodeSession(s: Session): string {
-  const payload = Buffer.from(JSON.stringify(s)).toString("base64url");
+  const withExp: Session = { ...s, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC };
+  const payload = Buffer.from(JSON.stringify(withExp)).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }
 export function decodeSession(token?: string): Session | null {
   if (!token) return null;
-  const [payload, sig] = token.split(".");
-  if (!payload || !sig || sign(payload) !== sig) return null;
+  // Split on the LAST dot so a payload that itself contains dots can't be
+  // verified against the wrong segment.
+  const dot = token.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (!sigValid(payload, sig)) return null;
   try {
-    return JSON.parse(Buffer.from(payload, "base64url").toString());
+    const s: Session = JSON.parse(Buffer.from(payload, "base64url").toString());
+    if (s.exp && s.exp < Math.floor(Date.now() / 1000)) return null; // expired
+    return s;
   } catch {
     return null;
   }
 }
+// Constant-time string compare for the demo plaintext passwords.
+function safeEq(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
 export function verify(username: string, password: string): Session | null {
-  const u = USERS[(username || "").toLowerCase().trim()];
-  if (u && u.password === password) return u.session;
+  // Seeded demo accounts are only honored where explicitly allowed (off in prod
+  // unless ALLOW_DEMO_ACCOUNTS=true).
+  if (ALLOW_DEMO_ACCOUNTS) {
+    const u = USERS[(username || "").toLowerCase().trim()];
+    if (u && safeEq(u.password, password || "")) return u.session;
+  }
   // Fall through to dynamically-onboarded vendor accounts (users.ts only type-imports auth, so no runtime cycle).
   return verifyStored(username, password);
 }

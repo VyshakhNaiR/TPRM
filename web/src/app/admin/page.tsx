@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Cpu, Users, LogOut, Save, Check, Loader2, KeyRound, Server, Cloud, GitMerge, ScrollText, UserPlus } from "lucide-react";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ErrorState, Toaster, errorMessage, useToasts } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 const ROLE_TONE: Record<string, string> = {
@@ -35,35 +37,56 @@ export default function Admin() {
   const [auditEntries, setAuditEntries] = useState<any[]>([]);
   const [invite, setInvite] = useState({ company: "", email: "" });
   const [inviteLink, setInviteLink] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const toast = useToasts();
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      const me = await (await fetch("/api/me")).json();
-      if (!me.session || (me.session.role !== "root" && me.session.role !== "viewer")) { router.push("/login"); return; }
-      setRole(me.session.role);
-      const s = await (await fetch("/api/settings")).json();
-      setMeta(s); setMasked(s.settings); setCanManage(s.canManage);
-      const m = s.settings;
-      setDraft({
-        category: m.category,
-        static: { ...m.static },
-        local: { provider: m.local.provider, ollama: { ...m.local.ollama }, claudecode: { ...m.local.claudecode } },
-        integrated: { provider: m.integrated.provider, claude: { model: m.integrated.claude.model }, openai: { model: m.integrated.openai.model, baseUrl: m.integrated.openai.baseUrl }, grok: { model: m.integrated.grok.model, baseUrl: m.integrated.grok.baseUrl }, gemini: { model: m.integrated.gemini.model } },
-        hybrid: { ...m.hybrid },
-      });
-      setUsers((await (await fetch("/api/users")).json()).users);
-      try { const e = await fetch("/api/eval"); if (e.ok) setEvalData(await e.json()); } catch {}
-      try { const a = await fetch("/api/audit"); if (a.ok) setAuditEntries((await a.json()).entries); } catch {}
+      setLoadError("");
+      try {
+        const meRes = await fetch("/api/me");
+        if (!meRes.ok) throw new Error(await errorMessage(meRes, "Could not verify your session."));
+        const me = await meRes.json();
+        if (!me.session || (me.session.role !== "root" && me.session.role !== "viewer")) { router.push("/login"); return; }
+        if (cancelled) return;
+        setRole(me.session.role);
+        const sRes = await fetch("/api/settings");
+        if (!sRes.ok) throw new Error(await errorMessage(sRes, "Could not load platform settings."));
+        const s = await sRes.json();
+        if (cancelled) return;
+        setMeta(s); setMasked(s.settings); setCanManage(s.canManage);
+        const m = s.settings;
+        setDraft({
+          category: m.category,
+          static: { ...m.static },
+          local: { provider: m.local.provider, ollama: { ...m.local.ollama }, claudecode: { ...m.local.claudecode } },
+          integrated: { provider: m.integrated.provider, claude: { model: m.integrated.claude.model }, openai: { model: m.integrated.openai.model, baseUrl: m.integrated.openai.baseUrl }, grok: { model: m.integrated.grok.model, baseUrl: m.integrated.grok.baseUrl }, gemini: { model: m.integrated.gemini.model } },
+          hybrid: { ...m.hybrid },
+        });
+        const usersRes = await fetch("/api/users");
+        if (usersRes.ok && !cancelled) setUsers((await usersRes.json()).users);
+        try { const e = await fetch("/api/eval"); if (e.ok && !cancelled) setEvalData(await e.json()); } catch {}
+        try { const a = await fetch("/api/audit"); if (a.ok && !cancelled) setAuditEntries((await a.json()).entries); } catch {}
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "Could not load the admin console.");
+      }
     })();
-  }, [router]);
+    return () => { cancelled = true; };
+  }, [router, reloadKey]);
 
   async function createInvite() {
-    if (!invite.company || !invite.email) return;
-    const res = await fetch("/api/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(invite) });
-    if (res.ok) {
+    if (!invite.company || !invite.email) { toast.error("Enter a company and SPOC email first."); return; }
+    try {
+      const res = await fetch("/api/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(invite) });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not create the invite."));
       const d = await res.json();
       setInviteLink(`${window.location.origin}${d.link}`);
       setInvite({ company: "", email: "" });
+      toast.success("Invite link generated.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create the invite.");
     }
   }
 
@@ -77,12 +100,22 @@ export default function Admin() {
 
   async function save() {
     setSaving(true);
-    const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
-    if (res.ok) { setMasked((await res.json()).settings); setSaved(true); setTimeout(() => setSaved(false), 1800); }
-    setSaving(false);
+    try {
+      const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not save the configuration."));
+      setMasked((await res.json()).settings); setSaved(true); setTimeout(() => setSaved(false), 1800);
+      toast.success("Configuration saved.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the configuration.");
+    } finally {
+      setSaving(false);
+    }
   }
-  async function logout() { await fetch("/api/logout", { method: "POST" }); router.push("/login"); }
+  async function logout() {
+    try { await fetch("/api/logout", { method: "POST" }); } finally { router.push("/login"); }
+  }
 
+  if (loadError && !draft) return <ErrorState message={loadError} onRetry={() => setReloadKey((k) => k + 1)} />;
   if (!draft || !meta) return <main className="grid min-h-screen place-items-center text-muted"><Loader2 className="animate-spin" /></main>;
 
   const intProv = meta.integratedProviders.find((p: any) => p.id === draft.integrated.provider);
@@ -93,16 +126,17 @@ export default function Admin() {
       <header className="sticky top-0 z-20 -mx-5 mb-6 flex items-center justify-between border-b border-border bg-bg/70 px-5 py-3 backdrop-blur">
         <div className="flex items-center gap-3"><LogoLockup markWidth={38} /><span className="hidden text-sm text-muted sm:inline">· Root Console</span></div>
         <div className="flex items-center gap-3">
+          <Link href="/changelog" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Changelog</Link>
           <span className={cn("rounded-full border px-2.5 py-1 text-xs font-semibold", ROLE_TONE[role])}>{role}{!canManage && " · read-only"}</span>
           <ThemeToggle />
           <button onClick={logout} className="grid h-9 w-9 place-items-center rounded-xl border border-border text-muted hover:text-fg" aria-label="Sign out"><LogOut size={16} /></button>
         </div>
       </header>
 
-      <div className="mb-5 flex gap-2">
-        <button onClick={() => setTab("processing")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "processing" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Cpu size={15} /> Processing engine</button>
-        <button onClick={() => setTab("users")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "users" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Users size={15} /> Users & roles</button>
-        <button onClick={() => setTab("audit")} className={cn("inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "audit" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><ScrollText size={15} /> Audit log</button>
+      <div className="mb-5 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        <button onClick={() => setTab("processing")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "processing" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Cpu size={15} /> Processing engine</button>
+        <button onClick={() => setTab("users")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "users" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><Users size={15} /> Users & roles</button>
+        <button onClick={() => setTab("audit")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium", tab === "audit" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted")}><ScrollText size={15} /> Audit log</button>
       </div>
 
       {tab === "processing" && (
@@ -117,7 +151,7 @@ export default function Admin() {
               <div className="text-xs text-muted">
                 <p>Static Pipeline vs human assessor verdicts — <span className="text-fg">{evalData.agree}/{evalData.total}</span> agree on the labelled sample controls.</p>
                 <p className={cn("mt-0.5", evalData.falseCompliant > 0 ? "text-danger" : "text-ok")}>False-Compliant (the dangerous error): {evalData.falseCompliant}</p>
-                <p className="mt-0.5 text-[10px]">Measured on the curated sample (small set); full questionnaire eval grows the sample. Numbers are real, not claimed.</p>
+                <p className="mt-1 text-xs">Measured on the curated sample (small set); full questionnaire eval grows the sample. Numbers are real, not claimed.</p>
               </div>
             </div>
           )}
@@ -274,6 +308,7 @@ export default function Admin() {
           </div>
         </section>
       )}
+      <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
     </main>
   );
 }

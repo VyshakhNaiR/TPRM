@@ -17,6 +17,9 @@ export interface Extraction {
   chars: number;
   text: string;
   method: "pdf" | "docx" | "text" | "ocr" | "none";
+  // Distinguishes "couldn't read the file" from "file was empty/irrelevant" so
+  // the assessor isn't misled by a blank result. Optional for legacy cache files.
+  status?: "ok" | "empty" | "failed" | "unsupported";
 }
 
 export function hashBytes(buf: Buffer): string {
@@ -65,16 +68,20 @@ export async function extractFile(filename: string, buf: Buffer, opts?: { ocr?: 
   const ext = (filename.split(".").pop() || "").toLowerCase();
   let text = "";
   let method: Extraction["method"] = "none";
+  let status: Extraction["status"] = "ok";
+  const supported = ext === "pdf" || ext === "docx" || TEXT_EXT.has(ext) || (IMG_EXT.has(ext) && opts?.ocr !== false);
   try {
     if (ext === "pdf") { text = await fromPdf(buf); method = "pdf"; }
     else if (ext === "docx") { text = await fromDocx(buf); method = "docx"; }
     else if (TEXT_EXT.has(ext)) { text = buf.toString("utf8"); method = "text"; }
     else if (IMG_EXT.has(ext) && opts?.ocr !== false) { text = await fromImage(buf); method = "ocr"; }
   } catch {
-    text = ""; // extractor unavailable/failed — degrade gracefully
+    text = "";
+    status = "failed"; // extractor unavailable/threw — distinct from "empty"
   }
   text = (text || "").replace(/\s+/g, " ").trim().slice(0, MAX_CHARS);
-  const result: Extraction = { hash, type: ext, chars: text.length, text, method };
+  if (status !== "failed") status = !supported ? "unsupported" : text.length === 0 ? "empty" : "ok";
+  const result: Extraction = { hash, type: ext, chars: text.length, text, method, status };
 
   try {
     fs.mkdirSync(CACHE, { recursive: true });
@@ -106,4 +113,50 @@ export function detectStandards(text: string): string[] {
 export function hasRecentDate(text: string, nowYear: number): boolean {
   const years = (text.match(/\b(20\d{2})\b/g) || []).map(Number);
   return years.some((y) => y >= nowYear - 1 && y <= nowYear + 1);
+}
+
+// Lightweight retrieval: instead of head-truncating a long document (which drops
+// the substantiating control matrix at the back of a SOC 2 / ISO report), pick
+// the windows of text most relevant to the RFI keywords and stitch them together
+// within a character budget. Deterministic, no embeddings — a pragmatic stand-in
+// until pgvector RAG is wired. Falls back to head text when nothing matches.
+export function relevantExcerpt(text: string, keywords: string[], budget: number): string {
+  if (!text) return "";
+  if (text.length <= budget) return text;
+  const kws = keywords.map((k) => k.toLowerCase()).filter(Boolean);
+  if (!kws.length) return text.slice(0, budget);
+
+  const WIN = 1200; // chars per window
+  const STEP = 600; // overlap so a hit near a boundary isn't split
+  const lower = text.toLowerCase();
+  const windows: { start: number; score: number }[] = [];
+  for (let i = 0; i < text.length; i += STEP) {
+    const seg = lower.slice(i, i + WIN);
+    let score = 0;
+    for (const k of kws) if (seg.includes(k)) score++;
+    if (score > 0) windows.push({ start: i, score });
+  }
+  if (!windows.length) return text.slice(0, budget);
+
+  // Highest-scoring windows first; then restore document order and merge.
+  windows.sort((a, b) => b.score - a.score || a.start - b.start);
+  const chosen: { start: number }[] = [];
+  let used = 0;
+  for (const w of windows) {
+    if (used + WIN > budget) break;
+    chosen.push({ start: w.start });
+    used += WIN;
+  }
+  chosen.sort((a, b) => a.start - b.start);
+  const parts: string[] = [];
+  let lastEnd = -1;
+  for (const w of chosen) {
+    const start = Math.max(w.start, lastEnd);
+    const end = Math.min(w.start + WIN, text.length);
+    if (start >= end) continue;
+    parts.push(text.slice(start, end));
+    lastEnd = end;
+  }
+  const out = parts.join(" … ");
+  return out.length ? out.slice(0, budget) : text.slice(0, budget);
 }

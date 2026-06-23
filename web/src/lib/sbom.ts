@@ -17,7 +17,6 @@ export interface SbomReport {
   error?: string;
 }
 
-const SEBI_FIELDS = ["Component name", "Version", "Supplier", "License", "Cryptographic hash", "Unique identifier"];
 const ATTESTED = ["Encryption details", "Update/patch frequency", "Known unknowns"]; // supplier-attested, not standard SBOM
 
 export function parseSbom(text: string): SbomReport {
