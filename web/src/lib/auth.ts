@@ -10,7 +10,7 @@ import { sessionSecret, ALLOW_DEMO_ACCOUNTS } from "./config";
 export const SESSION_COOKIE = "ni_session";
 export const SESSION_TTL_SEC = 60 * 60 * 8; // 8h
 
-export type Role = "root" | "assessor" | "vendor" | "viewer";
+export type Role = "root" | "assessor" | "vendor" | "customer";
 
 export interface Session {
   username: string;
@@ -42,7 +42,9 @@ const MATRIX: Record<Role, Permission[]> = {
   ],
   assessor: ["submission:read:all", "submission:write:onbehalf", "verdict:override", "adjudicate:run", "audit:read"],
   vendor: ["submission:read:own", "submission:write:own"],
-  viewer: ["submission:read:all", "users:read", "settings:read", "audit:read"],
+  // Customer: read-only holistic consumer (bank stakeholder). Sees the portfolio
+  // of vendors + per-requirement compliance detail; no write, no admin/settings.
+  customer: ["submission:read:all"],
 };
 
 export function can(role: Role | undefined, perm: Permission): boolean {
@@ -55,12 +57,12 @@ export const USERS: Record<string, { password: string; session: Session }> = {
   root: { password: "demo", session: { username: "root", role: "root", name: "Root Administrator" } },
   dbs: { password: "demo", session: { username: "dbs", role: "assessor", name: "DBS Assessor" } },
   apex: { password: "demo", session: { username: "apex", role: "vendor", vendorId: "apex", name: "Apex Cloud Services Pvt. Ltd." } },
-  viewer: { password: "demo", session: { username: "viewer", role: "viewer", name: "Audit Viewer" } },
+  customer: { password: "demo", session: { username: "customer", role: "customer", name: "Customer (Bank Stakeholder)" } },
 };
 
 export const LANDING: Record<Role, string> = {
   root: "/admin",
-  viewer: "/admin",
+  customer: "/customer",
   assessor: "/console",
   vendor: "/vendor",
 };

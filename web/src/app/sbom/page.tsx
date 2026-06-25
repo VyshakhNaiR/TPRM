@@ -21,7 +21,7 @@ export default function SbomAnalyzer() {
       try {
         const me = await (await fetch("/api/me")).json();
         const role = me.session?.role;
-        if (role !== "assessor" && role !== "root" && role !== "viewer") router.push("/login");
+        if (role !== "assessor" && role !== "root") router.push("/login");
       } catch {
         router.push("/login");
       }

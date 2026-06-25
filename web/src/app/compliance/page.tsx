@@ -196,7 +196,7 @@ export default function CompliancePage() {
         if (!meRes.ok) throw new Error(await errorMessage(meRes, "Could not verify your session."));
         const me = await meRes.json();
         const r = me.session?.role;
-        if (r !== "assessor" && r !== "root" && r !== "viewer") { router.push("/login"); return; }
+        if (r !== "assessor" && r !== "root") { router.push("/login"); return; }
         if (cancelled) return;
         setRole(r);
         const vRes = await fetch("/api/vendors");

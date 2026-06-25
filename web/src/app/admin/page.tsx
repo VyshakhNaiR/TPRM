@@ -13,7 +13,7 @@ const ROLE_TONE: Record<string, string> = {
   root: "text-mas border-mas/40 bg-mas/10",
   assessor: "text-brand border-brand/40 bg-brand/10",
   vendor: "text-ok border-ok/40 bg-ok/10",
-  viewer: "text-muted border-border bg-surface-2",
+  customer: "text-muted border-border bg-surface-2",
 };
 const CAT_ICON: Record<string, any> = { static: Cpu, local: Server, integrated: Cloud, hybrid: GitMerge };
 
@@ -49,7 +49,7 @@ export default function Admin() {
         const meRes = await fetch("/api/me");
         if (!meRes.ok) throw new Error(await errorMessage(meRes, "Could not verify your session."));
         const me = await meRes.json();
-        if (!me.session || (me.session.role !== "root" && me.session.role !== "viewer")) { router.push("/login"); return; }
+        if (!me.session || me.session.role !== "root") { router.push("/login"); return; }
         if (cancelled) return;
         setRole(me.session.role);
         const sRes = await fetch("/api/settings");

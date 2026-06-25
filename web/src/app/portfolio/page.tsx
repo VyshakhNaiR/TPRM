@@ -30,7 +30,7 @@ export default function Portfolio() {
         if (!meRes.ok) throw new Error(await errorMessage(meRes, "Could not verify your session."));
         const me = await meRes.json();
         const role = me.session?.role;
-        if (role !== "assessor" && role !== "root" && role !== "viewer") { router.push("/login"); return; }
+        if (role !== "assessor" && role !== "root" && role !== "customer") { router.push("/login"); return; }
         const res = await fetch("/api/portfolio");
         if (!res.ok) throw new Error(await errorMessage(res, "Could not load the portfolio."));
         if (!cancelled) setData(await res.json());

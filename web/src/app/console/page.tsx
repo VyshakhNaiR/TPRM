@@ -75,7 +75,7 @@ export default function Console() {
         if (!meRes.ok) throw new Error(await errorMessage(meRes, "Could not verify your session."));
         const me = await meRes.json();
         const role = me.session?.role;
-        if (role !== "assessor" && role !== "root" && role !== "viewer") { router.push("/login"); return; }
+        if (role !== "assessor" && role !== "root") { router.push("/login"); return; }
         const r = await fetch("/api/vendors");
         if (!r.ok) throw new Error(await errorMessage(r, "Could not load the vendor list."));
         if (!cancelled) { setVendors((await r.json()).vendors); setLoaded(true); }

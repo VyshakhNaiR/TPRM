@@ -37,6 +37,20 @@ function ratingFor(posture: number): string {
   return "Unsatisfactory";
 }
 
+// Per-control verdict for a vendor (shared by the portfolio + customer views).
+function verdictOf(v: any, c: (typeof CONTROLS)[number]): Verdict {
+  if (v._real) {
+    const a = v._real.answers?.[c.id];
+    if (!a) return "Not Applicable"; // unanswered -> excluded from posture
+    if (a.applicable === false) return "Not Applicable";
+    // An assessor override is authoritative for the rollup.
+    const ov = v._real.overrides?.[c.id];
+    if (ov?.verdict) return ov.verdict as Verdict;
+    return (a.evidence?.length ?? 0) > 0 && a.response?.trim() ? "Compliant" : "Non-Compliant";
+  }
+  return syntheticVerdict(v.id, c.id, v.rate);
+}
+
 export function buildPortfolio() {
   const vendors: any[] = DEMO_VENDORS.map((v) => ({ ...v }));
 
@@ -53,17 +67,6 @@ export function buildPortfolio() {
       _real: sub, // constructed in one shot (no post-push mutation)
     });
   }
-
-  // verdict matrix
-  const verdictOf = (v: any, c: (typeof CONTROLS)[number]): Verdict => {
-    if (v._real) {
-      const a = v._real.answers[c.id];
-      if (!a) return "Not Applicable"; // unanswered -> excluded from posture
-      if (a.applicable === false) return "Not Applicable";
-      return (a.evidence?.length ?? 0) > 0 && a.response?.trim() ? "Compliant" : "Non-Compliant";
-    }
-    return syntheticVerdict(v.id, c.id, v.rate);
-  };
 
   // per-vendor rollup + accumulate threats/domains/frameworks/concentration
   const threatCount: Record<string, { vendors: Set<string>; controls: number }> = {};
@@ -128,4 +131,111 @@ export function buildPortfolio() {
   };
 
   return { vendorRows, threats, domains, frameworks, concentration, totals };
+}
+
+// ---------- Customer holistic view ----------
+// Reassessment cadence by inherent-risk tier → drives "Next due" (decision #6).
+const CADENCE_MONTHS: Record<string, number> = { Critical: 12, High: 12, Medium: 24, Low: 36, Unrated: 12 };
+
+function addMonths(iso: string, months: number): string {
+  const d = new Date(iso);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString();
+}
+// Stable synthetic initiation date for demo vendors (6–24 months ago).
+function synthInitiated(id: string): string {
+  const months = 6 + Math.floor(h(id + "init") * 18);
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  d.setDate(1 + Math.floor(h(id + "day") * 27));
+  return d.toISOString();
+}
+
+function vendorObjs(): any[] {
+  const objs: any[] = DEMO_VENDORS.map((v) => ({ ...v, initiatedAt: synthInitiated(v.id) }));
+  for (const ov of listVendors()) {
+    objs.push({
+      id: ov.vendorId,
+      name: ov.name,
+      tier: ov.profile.tier || "Unrated",
+      rate: 0.7,
+      cloud: "—",
+      region: ov.profile.country || "—",
+      regulators: (ov.profile as any).regulators,
+      _real: getSubmission(ov.vendorId),
+      initiatedAt: ov.createdAt || synthInitiated(ov.vendorId),
+    });
+  }
+  return objs;
+}
+
+export interface CustomerRow {
+  vendorId: string;
+  name: string;
+  tier: string; // criticality
+  posture: number; // % compliant of applicable
+  rating: string; // compliance status (Good → Unsatisfactory)
+  compliant: number;
+  nc: number;
+  na: number;
+  total: number;
+  regulators: string[];
+  initiatedAt: string;
+  nextDueAt: string;
+  overdue: boolean;
+}
+
+function rollup(v: any) {
+  let compliant = 0, nc = 0, na = 0;
+  for (const c of CONTROLS) {
+    const verdict = verdictOf(v, c);
+    if (verdict === "Compliant") compliant++;
+    else if (verdict === "Non-Compliant") nc++;
+    else na++;
+  }
+  const applicable = compliant + nc;
+  const posture = applicable ? Math.round((compliant / applicable) * 100) : 0;
+  return { compliant, nc, na, posture };
+}
+
+export function customerList(): CustomerRow[] {
+  const now = Date.now();
+  return vendorObjs().map((v) => {
+    const { compliant, nc, na, posture } = rollup(v);
+    const nextDueAt = addMonths(v.initiatedAt, CADENCE_MONTHS[v.tier] ?? 12);
+    return {
+      vendorId: v.id,
+      name: v.name,
+      tier: v.tier,
+      posture,
+      rating: ratingFor(posture),
+      compliant, nc, na,
+      total: CONTROLS.length,
+      regulators: Array.isArray(v.regulators) ? v.regulators : [],
+      initiatedAt: v.initiatedAt,
+      nextDueAt,
+      overdue: Date.parse(nextDueAt) < now,
+    };
+  });
+}
+
+export interface RequirementDetail {
+  id: string;
+  family: string;
+  question: string;
+  verdict: Verdict;
+  frameworks: string[];
+}
+export function vendorRequirementDetail(vendorId: string): { vendor: CustomerRow | null; controls: RequirementDetail[] } {
+  const v = vendorObjs().find((x) => x.id === vendorId);
+  if (!v) return { vendor: null, controls: [] };
+  const row = customerList().find((r) => r.vendorId === vendorId) ?? null;
+  const controls: RequirementDetail[] = CONTROLS.map((c) => ({
+    id: c.id,
+    family: c.family,
+    question: c.question,
+    verdict: verdictOf(v, c),
+    frameworks: Array.from(new Set(c.mappings.map((m) => m.framework))),
+  }));
+  return { vendor: row, controls };
 }
