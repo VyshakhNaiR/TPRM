@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { withLock } from "./lock";
 
 // File-backed persistence (JSON per vendor). Works instantly for the demo and is
@@ -66,6 +67,15 @@ export interface PriorFinding {
   note?: string;
   confirmed?: boolean;
 }
+// Vendor-level certification library (Phase: upload once, reference per control).
+export interface VendorCert {
+  id: string;
+  certType: CertType;
+  filename: string;
+  size: number;
+  hash?: string;
+  uploadedAt: string;
+}
 export interface Submission {
   vendorId: string;
   status: "draft" | "submitted";
@@ -75,6 +85,7 @@ export interface Submission {
   overrides?: Record<string, Override>;
   priorFindings?: Record<string, PriorFinding>;
   priorAuditAt?: string;
+  certs?: VendorCert[];
   updatedAt: string;
 }
 
@@ -172,6 +183,28 @@ export function setOverride(
     return s;
   });
 }
+// Vendor certification library — upload a cert once, reference it on many controls.
+export function addCert(vendorId: string, cert: Omit<VendorCert, "id" | "uploadedAt">): Promise<VendorCert> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    s.certs ??= [];
+    const c: VendorCert = { ...cert, id: crypto.randomUUID(), uploadedAt: now() };
+    s.certs.push(c);
+    s.updatedAt = now();
+    write(s);
+    return c;
+  });
+}
+export function removeCert(vendorId: string, certId: string): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    s.certs = (s.certs ?? []).filter((c) => c.id !== certId);
+    s.updatedAt = now();
+    write(s);
+    return s;
+  });
+}
+
 // Seed/confirm prior-audit findings for an existing vendor (Phase E).
 export function setPriorFindings(
   vendorId: string,

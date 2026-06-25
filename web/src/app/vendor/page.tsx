@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle } from "lucide-react";
+import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle, ShieldCheck, Trash2 } from "lucide-react";
 import { CONTROLS } from "@/data/seed";
-import type { CertType, CoverageMode, Submission } from "@/lib/store";
+import type { CertType, CoverageMode, Submission, VendorCert } from "@/lib/store";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ErrorState, Toaster, errorMessage, useToasts } from "@/components/ui";
@@ -21,6 +21,13 @@ const CERT_TYPES: { value: CertType; label: string }[] = [
   { value: "soc2_type2", label: "SOC 2 Type 2 Attestation" },
 ];
 
+// Concise labels used in the certification library list + per-control references.
+const CERT_SHORT: Record<CertType, string> = {
+  iso27001: "ISO/IEC 27001",
+  pci_aoc: "PCI DSS AOC",
+  soc2_type2: "SOC 2 Type 2",
+};
+
 /**
  * Derive how the vendor is addressing a control:
  *  - explicit `coverage` wins
@@ -33,17 +40,19 @@ function coverageOf(a: Answer | undefined): CoverageMode {
 }
 
 /**
- * A control is "answered" depending on its coverage mode:
+ * A control is "complete" depending on its coverage mode (mirrors the server's
+ * answerComplete() + certification library check in PUT /api/submission):
  *  - evidence: has a response OR ≥1 evidence file
- *  - certification: has a cert type + a non-empty mapping note + ≥1 uploaded file
+ *  - certification: has a cert type + a non-empty mapping note + a cert of that
+ *    type present in the vendor's certification library
  *  - not_applicable: has a justification
  */
-function isAnswered(a: Answer | undefined): boolean {
+function isAnswered(a: Answer | undefined, certTypes: Set<CertType>): boolean {
   if (!a) return false;
   const mode = coverageOf(a);
   if (mode === "not_applicable") return !!a.justification?.trim();
   if (mode === "certification") {
-    return !!a.certType && !!a.certMappingNote?.trim() && (a.evidence?.length ?? 0) > 0;
+    return !!a.certType && !!a.certMappingNote?.trim() && certTypes.has(a.certType);
   }
   return !!a.response?.trim() || (a.evidence?.length ?? 0) > 0;
 }
@@ -62,6 +71,14 @@ export default function VendorPortal() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   // Controls flagged client/server-side as needing an N/A reason — drives the visual flag.
   const [missingReasons, setMissingReasons] = useState<Set<string>>(new Set());
+  // Controls flagged client/server-side as incomplete (any mode) — drives the visual flag.
+  const [incompleteFlags, setIncompleteFlags] = useState<Set<string>>(new Set());
+  // Vendor certification library (upload once, reference everywhere).
+  const [certs, setCerts] = useState<VendorCert[]>([]);
+  const [certUploadType, setCertUploadType] = useState<CertType | "">("");
+  const [certBusy, setCertBusy] = useState(false);
+  const [certDeleting, setCertDeleting] = useState<Record<string, boolean>>({});
+  const certFileRef = useRef<HTMLInputElement | null>(null);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const toast = useToasts();
@@ -98,6 +115,19 @@ export default function VendorPortal() {
     });
   }, [sub]);
 
+  // Load the vendor's certification library (used both by the panel and to decide
+  // whether a certification-mode answer is complete).
+  const loadCerts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/cert");
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not load your certifications."));
+      const data = await res.json();
+      setCerts(Array.isArray(data?.certs) ? data.certs : []);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not load your certifications.");
+    }
+  }, [toast]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -116,12 +146,13 @@ export default function VendorPortal() {
         if (!subRes.ok) throw new Error(await errorMessage(subRes, "Could not load your questionnaire."));
         const data = await subRes.json();
         if (!cancelled) setSub(data);
+        if (!cancelled) loadCerts();
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : "Could not load your questionnaire.");
       }
     })();
     return () => { cancelled = true; };
-  }, [router, reloadKey]);
+  }, [router, reloadKey, loadCerts]);
 
   // flush any pending debounced autosave timers on unmount
   useEffect(() => () => { Object.values(debounceTimers.current).forEach(clearTimeout); }, []);
@@ -137,8 +168,12 @@ export default function VendorPortal() {
     () => (priorFindings ? Object.values(priorFindings).filter((f) => f?.verdict === "Non-Compliant").length : 0),
     [priorFindings]
   );
-  const answered = CONTROLS.filter((c) => isAnswered(answers[c.id])).length;
+  // Cert types the vendor has uploaded to their library — a certification answer is
+  // only complete when its certType is present here.
+  const availableCertTypes = useMemo(() => new Set(certs.map((c) => c.certType)), [certs]);
+  const answered = CONTROLS.filter((c) => isAnswered(answers[c.id], availableCertTypes)).length;
   const pct = Math.round((answered / CONTROLS.length) * 100);
+  const allComplete = answered === CONTROLS.length;
   const submitted = sub?.status === "submitted";
   const needsAttention = Object.values((sub?.reviews ?? {}) as Record<string, { status: string }>).filter((r) => r.status === "open").length;
 
@@ -183,6 +218,14 @@ export default function VendorPortal() {
             return next;
           });
         }
+        // Any successful edit clears the generic "incomplete" flag for this control;
+        // it'll be recomputed/re-flagged on the next submit attempt if still pending.
+        setIncompleteFlags((m) => {
+          if (!m.has(controlId)) return m;
+          const next = new Set(m);
+          next.delete(controlId);
+          return next;
+        });
       } catch (e) {
         setSaveState("error");
         toast.error(e instanceof Error ? e.message : "Could not save your answer.");
@@ -226,11 +269,56 @@ export default function VendorPortal() {
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       if (!res.ok) throw new Error(await errorMessage(res, "Upload failed."));
       setSub((await res.json()).submission);
+      setIncompleteFlags((m) => {
+        if (!m.has(controlId)) return m;
+        const next = new Set(m);
+        next.delete(controlId);
+        return next;
+      });
       toast.success(`Uploaded ${file.name}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Upload failed.");
     } finally {
       setUploading((s) => ({ ...s, [controlId]: false }));
+    }
+  }
+
+  // ---- Certification library (upload once, reference everywhere) ----
+  async function uploadCert(file: File) {
+    if (!certUploadType) {
+      toast.error("Choose a certificate type first.");
+      return;
+    }
+    setCertBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("certType", certUploadType);
+      const res = await fetch("/api/cert", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not upload certificate."));
+      const data = await res.json();
+      setCerts(Array.isArray(data?.certs) ? data.certs : []);
+      setCertUploadType("");
+      toast.success(`Uploaded ${file.name}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not upload certificate.");
+    } finally {
+      setCertBusy(false);
+    }
+  }
+
+  async function deleteCert(id: string) {
+    setCertDeleting((s) => ({ ...s, [id]: true }));
+    try {
+      const res = await fetch(`/api/cert?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not remove certificate."));
+      const data = await res.json();
+      setCerts(Array.isArray(data?.certs) ? data.certs : []);
+      toast.success("Certificate removed.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not remove certificate.");
+    } finally {
+      setCertDeleting((s) => { const next = { ...s }; delete next[id]; return next; });
     }
   }
 
@@ -246,16 +334,26 @@ export default function VendorPortal() {
   }, []);
 
   async function submitAll() {
-    // Client-side gate first for immediate feedback (matches the server's rule).
+    // Client-side gate first for immediate feedback (matches the server's rule):
+    // 1) N/A controls without a reason, 2) any other incomplete control.
     const clientMissing = CONTROLS.filter((c) => {
       const a = answers[c.id];
       return a && coverageOf(a) === "not_applicable" && !a.justification?.trim();
     }).map((c) => c.id);
-    if (clientMissing.length) {
-      const set = new Set(clientMissing);
-      setMissingReasons(set);
-      revealMissing(set);
-      toast.error(`${clientMissing.length} control${clientMissing.length > 1 ? "s" : ""} marked Not Applicable still ${clientMissing.length > 1 ? "need" : "needs"} a reason.`);
+    const clientIncomplete = CONTROLS.filter(
+      (c) => !isAnswered(answers[c.id], availableCertTypes) && !clientMissing.includes(c.id)
+    ).map((c) => c.id);
+    if (clientMissing.length || clientIncomplete.length) {
+      const missingSet = new Set(clientMissing);
+      const incompleteSet = new Set(clientIncomplete);
+      setMissingReasons(missingSet);
+      setIncompleteFlags(incompleteSet);
+      revealMissing(new Set([...clientMissing, ...clientIncomplete]));
+      if (clientMissing.length) {
+        toast.error(`${clientMissing.length} control${clientMissing.length > 1 ? "s" : ""} marked Not Applicable still ${clientMissing.length > 1 ? "need" : "needs"} a reason.`);
+      } else {
+        toast.error(`Complete all requirements to submit — ${clientIncomplete.length} still pending.`);
+      }
       return;
     }
 
@@ -263,21 +361,26 @@ export default function VendorPortal() {
     try {
       const res = await fetch("/api/submission", { method: "PUT" });
       if (!res.ok) {
-        // Server may return { error, missing: [...] } — surface and reveal the offenders.
+        // Server may return { error, missing: [...] } and/or { error, incomplete: [...] } —
+        // surface and reveal the offenders for whichever it sent.
         let serverMissing: string[] = [];
+        let serverIncomplete: string[] = [];
         try {
           const data = await res.clone().json();
-          if (Array.isArray(data?.missing)) serverMissing = data.missing.filter((x: unknown): x is string => typeof x === "string");
+          const arr = (v: unknown): string[] => Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === "string") : [];
+          serverMissing = arr(data?.missing);
+          serverIncomplete = arr(data?.incomplete);
         } catch { /* not JSON */ }
-        if (serverMissing.length) {
-          const set = new Set(serverMissing);
-          setMissingReasons(set);
-          revealMissing(set);
+        if (serverMissing.length) setMissingReasons(new Set(serverMissing));
+        if (serverIncomplete.length) setIncompleteFlags(new Set(serverIncomplete));
+        if (serverMissing.length || serverIncomplete.length) {
+          revealMissing(new Set([...serverMissing, ...serverIncomplete]));
         }
         throw new Error(await errorMessage(res, "Could not submit for review."));
       }
       setSub(await res.json());
       setMissingReasons(new Set());
+      setIncompleteFlags(new Set());
       toast.success("Questionnaire submitted for review.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not submit for review.");
@@ -318,13 +421,14 @@ export default function VendorPortal() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold">Security Questionnaire</h1>
-            <p className="text-sm text-muted">{answered} of {CONTROLS.length} answered · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
+            <p className="text-sm text-muted">{answered} of {CONTROLS.length} complete · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
             <SaveIndicator state={saveState} savedAt={savedAt} />
           </div>
           <button
             onClick={submitAll}
-            disabled={submitting || submitted}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
+            disabled={submitting || submitted || !allComplete}
+            title={!submitted && !allComplete ? "Complete all requirements to submit" : undefined}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitted ? <CheckCircle2 size={16} /> : <Send size={16} />}
             {submitted ? "Submitted" : submitting ? "Submitting…" : "Submit for review"}
@@ -334,7 +438,7 @@ export default function VendorPortal() {
           <motion.div className="h-full rounded-full bg-brand" animate={{ width: `${pct}%` }} transition={{ duration: 0.5 }} />
         </div>
         <div className="mt-3 flex items-center justify-between">
-          <span className="text-xs font-medium text-muted">{answered} / {CONTROLS.length} answered</span>
+          <span className="text-xs font-medium text-muted">{answered} / {CONTROLS.length} complete</span>
           <button
             onClick={() => setAll(!allOpen)}
             className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted transition hover:border-brand/50 hover:text-fg"
@@ -355,12 +459,82 @@ export default function VendorPortal() {
         </div>
       )}
 
+      {/* My certifications — upload each certificate ONCE, reference it per control */}
+      <section className="glass mb-6 rounded-2xl p-5">
+        <div className="flex items-start gap-2.5">
+          <ShieldCheck size={18} className="mt-0.5 shrink-0 text-brand" />
+          <div>
+            <h2 className="text-sm font-semibold">My certifications</h2>
+            <p className="text-xs text-muted">Upload each certificate or attestation once — then reference it from any requirement without re-uploading.</p>
+          </div>
+        </div>
+
+        {certs.length > 0 ? (
+          <ul className="mt-3 space-y-2">
+            {certs.map((ct) => (
+              <li key={ct.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface/60 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <CheckCircle2 size={15} className="shrink-0 text-ok" />
+                  <span className="shrink-0 rounded-md bg-ok/10 px-1.5 py-0.5 text-[11px] font-semibold text-ok">{CERT_SHORT[ct.certType]}</span>
+                  <span className="truncate text-xs text-muted"><Paperclip size={11} className="mr-1 inline align-middle" />{ct.filename}</span>
+                </div>
+                <button
+                  onClick={() => deleteCert(ct.id)}
+                  disabled={!!certDeleting[ct.id] || submitted}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-border text-muted transition hover:border-danger/50 hover:text-danger disabled:opacity-60"
+                  aria-label={`Remove ${CERT_SHORT[ct.certType]} certificate`}
+                >
+                  {certDeleting[ct.id] ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 rounded-xl border border-dashed border-border bg-surface/40 px-3 py-2.5 text-xs text-muted">No certificates uploaded yet.</p>
+        )}
+
+        {!submitted && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label htmlFor="cert-upload-type" className="sr-only">Certificate type</label>
+            <select
+              id="cert-upload-type"
+              value={certUploadType}
+              disabled={certBusy}
+              onChange={(e) => setCertUploadType((e.target.value || "") as CertType | "")}
+              className="rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand disabled:opacity-60"
+            >
+              <option value="">Select a certificate type…</option>
+              {CERT_TYPES.map((ct) => (
+                <option key={ct.value} value={ct.value}>{ct.label}</option>
+              ))}
+            </select>
+            <input
+              ref={certFileRef}
+              type="file"
+              hidden
+              aria-label="Upload certificate file"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCert(f); e.target.value = ""; }}
+            />
+            <button
+              onClick={() => { if (!certUploadType) { toast.error("Choose a certificate type first."); return; } certFileRef.current?.click(); }}
+              disabled={certBusy}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-sm font-medium transition hover:border-brand/50 disabled:opacity-60"
+            >
+              {certBusy ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />}
+              Upload certificate
+            </button>
+          </div>
+        )}
+      </section>
+
       {/* questionnaire — collapsible accordion grouped by control family */}
       <div className="space-y-3">
         {groups.map(([family, items]) => {
           const total = items.length;
-          const done = items.filter((c) => isAnswered(answers[c.id])).length;
-          const flagged = items.filter((c) => missingReasons.has(c.id)).length;
+          const done = items.filter((c) => isAnswered(answers[c.id], availableCertTypes)).length;
+          const flaggedReason = items.filter((c) => missingReasons.has(c.id)).length;
+          const flaggedIncomplete = items.filter((c) => incompleteFlags.has(c.id)).length;
+          const flagged = flaggedReason + flaggedIncomplete;
           const isOpen = !!open[family];
           const panelId = `section-${family.replace(/[^\w]+/g, "-")}`;
           return (
@@ -378,12 +552,12 @@ export default function VendorPortal() {
                   <span className="truncate text-sm font-semibold">{family}</span>
                   {flagged > 0 && (
                     <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-danger/40 bg-danger/10 px-2 py-0.5 text-[11px] font-semibold text-danger">
-                      <AlertTriangle size={11} /> needs a reason
+                      <AlertTriangle size={11} /> {flaggedReason > 0 ? "needs a reason" : "incomplete"}
                     </span>
                   )}
                 </div>
                 <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums", done === total ? "bg-ok/10 text-ok" : "bg-surface-2 text-muted")}>
-                  {done} / {total} answered
+                  {done} / {total} complete
                 </span>
               </button>
 
@@ -407,6 +581,7 @@ export default function VendorPortal() {
                         // A returned (open) finding re-opens the control even after submission.
                         const locked = submitted && !(rev && rev.status === "open");
                         const needsReason = na && missingReasons.has(c.id);
+                        const incompleteFlag = incompleteFlags.has(c.id) && !needsReason;
                         const setMode = (next: CoverageMode) => {
                           if (locked || next === mode) return;
                           if (next === "not_applicable") {
@@ -418,7 +593,7 @@ export default function VendorPortal() {
                           }
                         };
                         return (
-                          <div key={c.id} className={cn("rounded-2xl border border-border bg-surface/40 p-4", needsReason && "border-danger/50")}>
+                          <div key={c.id} className={cn("rounded-2xl border border-border bg-surface/40 p-4", (needsReason || incompleteFlag) && "border-danger/50")}>
                             <div className="flex items-start justify-between gap-3">
                               <div>
                                 <span className="font-mono text-[10px] text-muted">{c.id}</span>
@@ -430,7 +605,7 @@ export default function VendorPortal() {
                                 <p className="text-sm font-medium leading-snug">{c.question}</p>
                               </div>
                               {saving[c.id] && <Loader2 size={14} className="mt-1 shrink-0 animate-spin text-muted" />}
-                              {!saving[c.id] && isAnswered(a) && <CheckCircle2 size={15} className="mt-1 shrink-0 text-ok" />}
+                              {!saving[c.id] && isAnswered(a, availableCertTypes) && <CheckCircle2 size={15} className="mt-1 shrink-0 text-ok" />}
                             </div>
 
                             {rev && rev.status === "open" && (
@@ -546,29 +721,20 @@ export default function VendorPortal() {
                                   className="mt-1 w-full resize-y rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand"
                                 />
 
-                                <p className="mt-3 text-xs font-medium text-fg">Attach the certificate / report</p>
-                                <div className="mt-1 flex flex-wrap items-center gap-2">
-                                  <input
-                                    ref={(el) => { fileRefs.current[c.id] = el; }}
-                                    type="file"
-                                    hidden
-                                    aria-label={`Attach certificate for ${c.id}`}
-                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(c.id, f); e.target.value = ""; }}
-                                  />
-                                  <button
-                                    onClick={() => fileRefs.current[c.id]?.click()}
-                                    disabled={locked || uploading[c.id]}
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium hover:border-brand/50 disabled:opacity-60"
-                                  >
-                                    {uploading[c.id] ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />}
-                                    Attach certificate / report
-                                  </button>
-                                  {(a?.evidence ?? []).map((ev) => (
-                                    <span key={ev.id} className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1 text-[11px] text-muted">
-                                      <Paperclip size={11} /> {ev.filename}
-                                    </span>
-                                  ))}
-                                </div>
+                                {/* Reference the certification library — no per-control upload */}
+                                {a?.certType && (
+                                  availableCertTypes.has(a.certType) ? (
+                                    <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-ok">
+                                      <CheckCircle2 size={13} className="shrink-0" />
+                                      Uses your {CERT_SHORT[a.certType]} from My certifications
+                                    </p>
+                                  ) : (
+                                    <p className="mt-2 inline-flex items-start gap-1.5 rounded-lg border border-warn/40 bg-warn/10 px-2 py-1.5 text-xs font-medium text-warn">
+                                      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                                      Upload your {CERT_SHORT[a.certType]} in My certifications above to complete this.
+                                    </p>
+                                  )
+                                )}
                               </>
                             )}
 
@@ -608,6 +774,10 @@ export default function VendorPortal() {
                                   ))}
                                 </div>
                               </>
+                            )}
+
+                            {incompleteFlag && (
+                              <p className="mt-2 text-xs font-medium text-danger" role="alert">Complete this requirement before you can submit.</p>
                             )}
                           </div>
                         );

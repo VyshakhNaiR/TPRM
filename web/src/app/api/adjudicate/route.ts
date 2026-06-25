@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
       coverage: stored.coverage,
       certType: stored.certType,
       certMappingNote: stored.certMappingNote,
+      certAvailable: !!stored.certType && (submission.certs ?? []).some((cert) => cert.certType === stored.certType),
     };
     return NextResponse.json(await adjudicate(c, eff, getSettings()));
   }

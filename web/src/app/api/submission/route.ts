@@ -61,18 +61,40 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(out);
 }
 
+// A control is "complete" when it has been fully answered in one of the modes.
+// Kept in sync with the vendor UI's isAnswered().
+export function answerComplete(a: Answer | undefined): boolean {
+  if (!a) return false;
+  const cov = a.coverage || (a.applicable === false ? "not_applicable" : "evidence");
+  if (cov === "not_applicable") return !!(a.justification && a.justification.trim());
+  if (cov === "certification") return !!(a.certType && a.certMappingNote && a.certMappingNote.trim());
+  return !!(a.response && a.response.trim()) || (a.evidence?.length ?? 0) > 0;
+}
+
 export async function PUT(req: NextRequest) {
   const r = await resolve(req, true);
   if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.error === "unauthenticated" ? 401 : 403 });
-  // Submit gate: every applicable control with content must justify any N/A.
+  // Submit gate: the questionnaire must be COMPLETE — every control fully answered
+  // (evidence / certification / not-applicable-with-reason). Incomplete submission
+  // is blocked, and N/A without a reason is reported specifically.
   const sub = getSubmission(r.vendorId);
-  const missing = CONTROLS.filter((c) => {
+  const missingReason = CONTROLS.filter((c) => {
     const a = sub.answers[c.id];
-    return a && a.applicable === false && !(a.justification && a.justification.trim());
+    return a && (a.coverage === "not_applicable" || a.applicable === false) && !(a.justification && a.justification.trim());
   }).map((c) => c.id);
-  if (missing.length) {
+  if (missingReason.length) {
+    return NextResponse.json({ error: "Each control marked Not Applicable needs a reasoning statement.", missing: missingReason }, { status: 400 });
+  }
+  const incomplete = CONTROLS.filter((c) => {
+    const a = sub.answers[c.id];
+    if (!answerComplete(a)) return true;
+    // Certification answers need the referenced cert present in the library.
+    if (a?.coverage === "certification" && !(a.certType && (sub.certs ?? []).some((ct) => ct.certType === a.certType))) return true;
+    return false;
+  }).map((c) => c.id);
+  if (incomplete.length) {
     return NextResponse.json(
-      { error: "Each control marked Not Applicable needs a reasoning statement.", missing },
+      { error: `Complete all ${CONTROLS.length} requirements before submitting — ${incomplete.length} still pending.`, incomplete },
       { status: 400 }
     );
   }
