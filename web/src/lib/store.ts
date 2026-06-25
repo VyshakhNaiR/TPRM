@@ -21,6 +21,12 @@ export interface Evidence {
 // assessor-entered ("on behalf") answer can never be mistaken for a vendor
 // self-attestation.
 export type AnswerSource = "vendor" | "assessor_onsite" | "assessor_remote";
+// How the vendor chose to satisfy a requirement (Phase C):
+//  - "evidence": upload evidence + comment (the original flow)
+//  - "certification": an existing accredited cert covers it (cert type + mapping note + cert file)
+//  - "not_applicable": out of scope (mandatory reason)
+export type CoverageMode = "evidence" | "certification" | "not_applicable";
+export type CertType = "iso27001" | "pci_aoc" | "soc2_type2";
 export interface Answer {
   response: string;
   applicable: boolean;
@@ -29,6 +35,11 @@ export interface Answer {
   updatedAt: string;
   source?: AnswerSource; // default "vendor"
   enteredBy?: string; // username who entered it (assessor when on-behalf)
+  // ---- Certification-as-evidence (Phase C) ----
+  coverage?: CoverageMode;
+  certType?: CertType;
+  certMappingNote?: string; // how the cert covers this requirement
+  // the uploaded certificate/attestation report is stored in `evidence` above
 }
 // Assessor finding sent back to the vendor for remediation (the "(New)" cycle).
 export interface Review {
@@ -47,6 +58,14 @@ export interface Override {
   by: string;
   at: string;
 }
+// Prior-audit findings for an existing vendor (Phase E) — re-check everything,
+// but spotlight what failed last time. `confirmed` flips true once the assessor
+// validates the parsed result.
+export interface PriorFinding {
+  verdict: string; // last audit's verdict for this control
+  note?: string;
+  confirmed?: boolean;
+}
 export interface Submission {
   vendorId: string;
   status: "draft" | "submitted";
@@ -54,6 +73,8 @@ export interface Submission {
   answers: Record<string, Answer>;
   reviews?: Record<string, Review>;
   overrides?: Record<string, Override>;
+  priorFindings?: Record<string, PriorFinding>;
+  priorAuditAt?: string;
   updatedAt: string;
 }
 
@@ -151,6 +172,22 @@ export function setOverride(
     return s;
   });
 }
+// Seed/confirm prior-audit findings for an existing vendor (Phase E).
+export function setPriorFindings(
+  vendorId: string,
+  findings: Record<string, PriorFinding>,
+  auditAt?: string
+): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    s.priorFindings = findings;
+    if (auditAt) s.priorAuditAt = auditAt;
+    s.updatedAt = now();
+    write(s);
+    return s;
+  });
+}
+
 export function clearOverride(vendorId: string, controlId: string): Promise<Submission> {
   return withLock(`subm:${vendorId}`, () => {
     const s = getSubmission(vendorId);

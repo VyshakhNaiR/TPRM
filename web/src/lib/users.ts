@@ -10,6 +10,7 @@ import { IS_PROD } from "./config";
 const DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const FILE = path.join(DIR, "users.json");
 
+export interface UploadRef { id: string; filename: string; size: number }
 export interface VendorProfile {
   company: string;
   address: string;
@@ -22,6 +23,15 @@ export interface VendorProfile {
   tier?: string;
   tierScore?: number;
   tierSelfDeclared?: boolean; // true until an assessor validates/overrides it
+  // ---- Assessor-led onboarding (Phase A) ----
+  engagementType?: "due_diligence" | "existing";
+  infraType?: "on_prem" | "cloud" | "hybrid";
+  csp?: string; // cloud service provider when cloud/hybrid
+  regulators?: string[]; // applicable: any of RBI / MAS / SEBI / None
+  tprmInitiatedAt?: string; // ISO; when the assessment was initiated
+  agreementFile?: UploadRef; // existing vendors: contract/MSA
+  lastAuditFile?: UploadRef; // existing vendors: last TPRM audit report
+  onboardedBy?: string; // assessor username who created the vendor
 }
 export interface StoredUser {
   username: string; // login id (email)
@@ -131,6 +141,19 @@ export function listVendors() {
 }
 export function getVendorProfile(vendorId: string): VendorProfile | null {
   return Object.values(readAll()).find((u) => u.vendorId === vendorId)?.profile ?? null;
+}
+
+// Merge fields into a vendor's profile (assessor onboarding: file refs, infra, etc.).
+export function updateVendorProfile(vendorId: string, patch: Partial<VendorProfile>): Promise<boolean> {
+  return withLock("users", () => {
+    const all = readAll();
+    const entry = Object.values(all).find((u) => u.vendorId === vendorId);
+    if (!entry) return false;
+    entry.profile = { ...entry.profile, ...patch };
+    all[entry.username] = entry;
+    writeAll(all);
+    return true;
+  });
 }
 
 // Assessor/root override of a vendor's inherent-risk tier (the self-declared

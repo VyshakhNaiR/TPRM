@@ -79,6 +79,9 @@ export async function POST(req: NextRequest) {
       evidenceText,
       evidenceCount: stored.evidence?.length ?? 0,
       applicable: stored.applicable,
+      coverage: stored.coverage,
+      certType: stored.certType,
+      certMappingNote: stored.certMappingNote,
     };
     return NextResponse.json(await adjudicate(c, eff, getSettings()));
   }

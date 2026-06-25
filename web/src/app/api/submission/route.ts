@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.error === "unauthenticated" ? 401 : 403 });
   const parsed = await readJson<{ controlId?: string; response?: unknown; applicable?: unknown; justification?: unknown }>(req);
   if ("error" in parsed) return parsed.error;
-  const { controlId, response, applicable, justification } = parsed.data;
+  const { controlId, response, applicable, justification, coverage, certType, certMappingNote } = parsed.data as any;
   if (!controlId || !CONTROLS.some((c) => c.id === controlId)) {
     return NextResponse.json({ error: "valid controlId required" }, { status: 400 });
   }
@@ -52,6 +52,20 @@ export async function POST(req: NextRequest) {
     patch.applicable = b;
   }
   if (justification !== undefined) patch.justification = String(justification ?? "").slice(0, MAX_RESPONSE_CHARS);
+  // Certification-as-evidence (Phase C)
+  if (coverage !== undefined) {
+    if (!["evidence", "certification", "not_applicable"].includes(coverage)) {
+      return NextResponse.json({ error: "invalid coverage" }, { status: 400 });
+    }
+    patch.coverage = coverage;
+  }
+  if (certType !== undefined) {
+    if (certType !== null && !["iso27001", "pci_aoc", "soc2_type2"].includes(certType)) {
+      return NextResponse.json({ error: "invalid certType" }, { status: 400 });
+    }
+    patch.certType = certType || undefined;
+  }
+  if (certMappingNote !== undefined) patch.certMappingNote = String(certMappingNote ?? "").slice(0, MAX_RESPONSE_CHARS);
   const out = await saveAnswer(r.vendorId, controlId, patch);
   if ("onBehalf" in r && r.onBehalf) audit(r.by, "entered answer on behalf", `${controlId} · ${r.vendorId} · ${r.source}`);
   return NextResponse.json(out);

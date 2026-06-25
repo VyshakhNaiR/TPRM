@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle } from "lucide-react";
 import { CONTROLS } from "@/data/seed";
-import type { Submission } from "@/lib/store";
+import type { CertType, CoverageMode, Submission } from "@/lib/store";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ErrorState, Toaster, errorMessage, useToasts } from "@/components/ui";
@@ -13,11 +13,39 @@ import { cn } from "@/lib/utils";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
-/** A control is "answered" once it has a response, or is marked N/A with a justification. */
-function isAnswered(a: Submission["answers"][string] | undefined): boolean {
+type Answer = Submission["answers"][string];
+
+const CERT_TYPES: { value: CertType; label: string }[] = [
+  { value: "iso27001", label: "ISO/IEC 27001 Certification" },
+  { value: "pci_aoc", label: "PCI DSS AOC" },
+  { value: "soc2_type2", label: "SOC 2 Type 2 Attestation" },
+];
+
+/**
+ * Derive how the vendor is addressing a control:
+ *  - explicit `coverage` wins
+ *  - else legacy answers map: applicable === false → not_applicable, otherwise evidence.
+ */
+function coverageOf(a: Answer | undefined): CoverageMode {
+  if (a?.coverage) return a.coverage;
+  if (a?.applicable === false) return "not_applicable";
+  return "evidence";
+}
+
+/**
+ * A control is "answered" depending on its coverage mode:
+ *  - evidence: has a response OR ≥1 evidence file
+ *  - certification: has a cert type + a non-empty mapping note + ≥1 uploaded file
+ *  - not_applicable: has a justification
+ */
+function isAnswered(a: Answer | undefined): boolean {
   if (!a) return false;
-  if (a.applicable === false) return !!a.justification?.trim();
-  return !!a.response?.trim();
+  const mode = coverageOf(a);
+  if (mode === "not_applicable") return !!a.justification?.trim();
+  if (mode === "certification") {
+    return !!a.certType && !!a.certMappingNote?.trim() && (a.evidence?.length ?? 0) > 0;
+  }
+  return !!a.response?.trim() || (a.evidence?.length ?? 0) > 0;
 }
 
 export default function VendorPortal() {
@@ -95,7 +123,17 @@ export default function VendorPortal() {
   }, [groups]);
 
   const save = useCallback(
-    async (controlId: string, patch: { response?: string; applicable?: boolean; justification?: string }) => {
+    async (
+      controlId: string,
+      patch: {
+        response?: string;
+        applicable?: boolean;
+        justification?: string;
+        coverage?: CoverageMode;
+        certType?: CertType | null;
+        certMappingNote?: string;
+      }
+    ) => {
       setSaving((s) => ({ ...s, [controlId]: true }));
       setSaveState("saving");
       try {
@@ -129,7 +167,10 @@ export default function VendorPortal() {
 
   // Debounced autosave for free-text fields (response & N/A justification) ~1.5s after typing stops.
   const queueAutosave = useCallback(
-    (controlId: string, patch: { response?: string; justification?: string }) => {
+    (
+      controlId: string,
+      patch: { response?: string; justification?: string; certMappingNote?: string; coverage?: CoverageMode; applicable?: boolean }
+    ) => {
       setSaveState("dirty");
       if (debounceTimers.current[controlId]) clearTimeout(debounceTimers.current[controlId]);
       debounceTimers.current[controlId] = setTimeout(() => {
@@ -180,7 +221,7 @@ export default function VendorPortal() {
     // Client-side gate first for immediate feedback (matches the server's rule).
     const clientMissing = CONTROLS.filter((c) => {
       const a = answers[c.id];
-      return a && a.applicable === false && !a.justification?.trim();
+      return a && coverageOf(a) === "not_applicable" && !a.justification?.trim();
     }).map((c) => c.id);
     if (clientMissing.length) {
       const set = new Set(clientMissing);
@@ -321,11 +362,22 @@ export default function VendorPortal() {
                     <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
                       {items.map((c) => {
                         const a = answers[c.id];
-                        const na = a?.applicable === false;
+                        const mode = coverageOf(a);
+                        const na = mode === "not_applicable";
                         const rev = sub.reviews?.[c.id];
                         // A returned (open) finding re-opens the control even after submission.
                         const locked = submitted && !(rev && rev.status === "open");
                         const needsReason = na && missingReasons.has(c.id);
+                        const setMode = (next: CoverageMode) => {
+                          if (locked || next === mode) return;
+                          if (next === "not_applicable") {
+                            save(c.id, { coverage: "not_applicable", applicable: false });
+                          } else if (next === "certification") {
+                            save(c.id, { coverage: "certification", applicable: true });
+                          } else {
+                            save(c.id, { coverage: "evidence", applicable: true });
+                          }
+                        };
                         return (
                           <div key={c.id} className={cn("rounded-2xl border border-border bg-surface/40 p-4", needsReason && "border-danger/50")}>
                             <div className="flex items-start justify-between gap-3">
@@ -351,19 +403,45 @@ export default function VendorPortal() {
                               <FileText size={12} className="mt-0.5 shrink-0" /><span>{c.rfi}</span>
                             </div>
 
-                            <label className="mt-2 flex items-center gap-2 text-xs text-muted">
-                              <input
-                                type="checkbox"
-                                checked={na}
-                                disabled={locked}
-                                onChange={(e) => save(c.id, { applicable: !e.target.checked })}
-                              />
-                              Not applicable to our engagement
-                            </label>
+                            {/* How are you addressing this? — three coverage modes */}
+                            <fieldset className="mt-3" disabled={locked}>
+                              <legend className="text-xs font-medium text-fg">How are you addressing this?</legend>
+                              <div role="radiogroup" aria-label={`How are you addressing ${c.id}?`} className="mt-1.5 grid gap-2 sm:grid-cols-3">
+                                {([
+                                  { value: "evidence" as CoverageMode, label: "Provide evidence & comment" },
+                                  { value: "certification" as CoverageMode, label: "Covered by an existing certification" },
+                                  { value: "not_applicable" as CoverageMode, label: "Not applicable" },
+                                ]).map((opt) => {
+                                  const active = mode === opt.value;
+                                  return (
+                                    <label
+                                      key={opt.value}
+                                      className={cn(
+                                        "flex cursor-pointer items-start gap-2 rounded-xl border bg-surface/60 px-3 py-2 text-xs transition",
+                                        active ? "border-brand ring-1 ring-brand/40" : "border-border hover:border-brand/40",
+                                        locked && "cursor-not-allowed opacity-60"
+                                      )}
+                                    >
+                                      <input
+                                        type="radio"
+                                        name={`coverage-${c.id}`}
+                                        value={opt.value}
+                                        checked={active}
+                                        disabled={locked}
+                                        aria-checked={active}
+                                        onChange={() => setMode(opt.value)}
+                                        className="mt-0.5"
+                                      />
+                                      <span className="font-medium leading-snug">{opt.label}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </fieldset>
 
-                            {na ? (
+                            {mode === "not_applicable" && (
                               <>
-                                <label htmlFor={`reason-${c.id}`} className="mt-2 block text-xs font-medium text-fg">
+                                <label htmlFor={`reason-${c.id}`} className="mt-3 block text-xs font-medium text-fg">
                                   Why is this not applicable? <span className="text-danger">*</span>
                                 </label>
                                 <textarea
@@ -374,8 +452,8 @@ export default function VendorPortal() {
                                   required
                                   aria-required="true"
                                   aria-invalid={needsReason}
-                                  onChange={(e) => { if (!locked) queueAutosave(c.id, { justification: e.target.value }); }}
-                                  onBlur={(e) => { cancelAutosave(c.id); if (!locked && e.target.value !== (a?.justification ?? "")) save(c.id, { justification: e.target.value }); }}
+                                  onChange={(e) => { if (!locked) queueAutosave(c.id, { coverage: "not_applicable", applicable: false, justification: e.target.value }); }}
+                                  onBlur={(e) => { cancelAutosave(c.id); if (!locked && e.target.value !== (a?.justification ?? "")) save(c.id, { coverage: "not_applicable", applicable: false, justification: e.target.value }); }}
                                   placeholder="Explain why this control does not apply to our engagement…"
                                   rows={2}
                                   className={cn(
@@ -387,18 +465,81 @@ export default function VendorPortal() {
                                   <p className="mt-1 text-xs font-medium text-danger" role="alert">A reason is required before you can submit.</p>
                                 )}
                               </>
-                            ) : (
+                            )}
+
+                            {mode === "certification" && (
+                              <>
+                                <label htmlFor={`certtype-${c.id}`} className="mt-3 block text-xs font-medium text-fg">
+                                  Certification type <span className="text-danger">*</span>
+                                </label>
+                                <select
+                                  id={`certtype-${c.id}`}
+                                  value={a?.certType ?? ""}
+                                  disabled={locked}
+                                  onChange={(e) => { if (!locked) save(c.id, { coverage: "certification", applicable: true, certType: (e.target.value || null) as CertType | null }); }}
+                                  className="mt-1 w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand"
+                                >
+                                  <option value="">Select a certification…</option>
+                                  {CERT_TYPES.map((ct) => (
+                                    <option key={ct.value} value={ct.value}>{ct.label}</option>
+                                  ))}
+                                </select>
+
+                                <label htmlFor={`certnote-${c.id}`} className="mt-3 block text-xs font-medium text-fg">
+                                  How does this certification cover this requirement? <span className="text-danger">*</span>
+                                </label>
+                                <textarea
+                                  id={`certnote-${c.id}`}
+                                  defaultValue={a?.certMappingNote ?? ""}
+                                  key={`certnote-${c.id}-${a?.certMappingNote ?? ""}`}
+                                  disabled={locked}
+                                  required
+                                  aria-required="true"
+                                  onChange={(e) => { if (!locked) queueAutosave(c.id, { coverage: "certification", applicable: true, certMappingNote: e.target.value }); }}
+                                  onBlur={(e) => { cancelAutosave(c.id); if (!locked && e.target.value !== (a?.certMappingNote ?? "")) save(c.id, { coverage: "certification", applicable: true, certMappingNote: e.target.value }); }}
+                                  placeholder="Describe which clauses / controls of this certification satisfy this requirement…"
+                                  rows={3}
+                                  className="mt-1 w-full resize-y rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand"
+                                />
+
+                                <p className="mt-3 text-xs font-medium text-fg">Attach the certificate / report</p>
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                  <input
+                                    ref={(el) => { fileRefs.current[c.id] = el; }}
+                                    type="file"
+                                    hidden
+                                    aria-label={`Attach certificate for ${c.id}`}
+                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(c.id, f); e.target.value = ""; }}
+                                  />
+                                  <button
+                                    onClick={() => fileRefs.current[c.id]?.click()}
+                                    disabled={locked || uploading[c.id]}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium hover:border-brand/50 disabled:opacity-60"
+                                  >
+                                    {uploading[c.id] ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />}
+                                    Attach certificate / report
+                                  </button>
+                                  {(a?.evidence ?? []).map((ev) => (
+                                    <span key={ev.id} className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1 text-[11px] text-muted">
+                                      <Paperclip size={11} /> {ev.filename}
+                                    </span>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+
+                            {mode === "evidence" && (
                               <>
                                 <label htmlFor={`response-${c.id}`} className="sr-only">Response for {c.id}</label>
                                 <textarea
                                   id={`response-${c.id}`}
                                   defaultValue={a?.response ?? ""}
                                   disabled={locked}
-                                  onChange={(e) => { if (!locked) queueAutosave(c.id, { response: e.target.value }); }}
-                                  onBlur={(e) => { cancelAutosave(c.id); if (!locked && e.target.value !== (a?.response ?? "")) save(c.id, { response: e.target.value }); }}
+                                  onChange={(e) => { if (!locked) queueAutosave(c.id, { coverage: "evidence", applicable: true, response: e.target.value }); }}
+                                  onBlur={(e) => { cancelAutosave(c.id); if (!locked && e.target.value !== (a?.response ?? "")) save(c.id, { coverage: "evidence", applicable: true, response: e.target.value }); }}
                                   placeholder="Your response…"
                                   rows={2}
-                                  className="mt-2 w-full resize-y rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand"
+                                  className="mt-3 w-full resize-y rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand"
                                 />
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                   <input
