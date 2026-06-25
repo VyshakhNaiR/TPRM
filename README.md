@@ -12,7 +12,62 @@ Vendors answer a security questionnaire once. The platform reads their evidence,
 
 ---
 
+## 🚀 Quick start (for mentors)
+
+**Runs fully offline — no API key, no Docker, no database needed.** You only need Node.js.
+
+### 1. Install Node.js 20+
+Get it from **https://nodejs.org** (LTS). Check it: `node -v` (should print v20 or higher).
+
+### 2. Get the code
+```bash
+git clone https://github.com/VyshakhNaiR/TPRM.git
+cd TPRM/web
+```
+*(Or, if you received a zip: unzip it, then `cd TPRM/web`.)*
+
+### 3. Install & run
+```bash
+npm install      # one-time (downloads dependencies, ~1–2 min)
+npm run dev      # starts the app
+```
+
+### 4. Open it
+Go to **http://localhost:3000** in your browser.
+
+### 5. Sign in (demo accounts — password is `demo` for all)
+| Username | Role | Lands on |
+|----------|------|----------|
+| `root`   | Root Administrator | `/admin` |
+| `dbs`    | Assessor (the bank) | `/console` |
+| `apex`   | Vendor | `/vendor` |
+| `viewer` | Audit Viewer (read-only) | `/admin` |
+
+> **Tip:** if a page ever looks broken/unstyled, it's a cached page — hard-refresh with **Ctrl+Shift+R** (Windows/Linux) / **Cmd+Shift+R** (Mac), or open an incognito window. To **stop** the app, press `Ctrl+C` in the terminal. Local data lives in `web/.data/` (delete it to reset the demo).
+
+---
+
+## 🎬 Presenting in ~5 minutes
+
+**Start with the guided deck:** open **http://localhost:3000/workflow** — an animated, slide-by-slide walkthrough of the whole TPRM lifecycle with screenshots of each feature (use ← / → arrows). It needs no login and is built exactly for this conversation.
+
+Then do a quick live click-through:
+
+1. **Vendor** (`apex` → `/vendor`) — the **categorized, collapsible questionnaire**; type an answer (autosaves), mark one control *Not Applicable* (it now **requires a reason**), attach evidence, **Submit**.
+2. **Assessor** (`dbs` → `/console`) — pick the demo vendor, **Adjudicate** a control (verdict + risk + confidence + citations + **live MAS/RBI/SEBI mapping**), then show the two headline additions:
+   - **Act on behalf of the vendor** (onsite/remote) — enter answers / upload evidence *for* them, recorded with attribution.
+   - **Override the verdict** with a mandatory rationale — the human is the final authority.
+3. **Compliance** (`/compliance`) — **Contracts/MSA** with a mandatory-clause checklist mapped to MAS/RBI/SEBI, the **Obligations** register, **Compliances** (cert expiry tracking), the **Custom compliance list**, and the **auto-reminders** (renewals / obligations / expiries).
+4. **Portfolio** (`/portfolio`) — posture, threat exposure, framework coverage, concentration, consolidated rating + approval authority.
+5. **Root** (`root` → `/admin`) — processing engine (Static / Local / AI / Hybrid), masked tokens, users & invites, audit log, and the **static-engine accuracy** number (90% on the labelled sample).
+
+> A 2-minute version of this also lives in **[RUN_LOCALLY.md](RUN_LOCALLY.md)**.
+
+---
+
 ## Table of contents
+- [🚀 Quick start (for mentors)](#-quick-start-for-mentors)
+- [🎬 Presenting in ~5 minutes](#-presenting-in-5-minutes)
 - [What it does](#what-it-does)
 - [Screenshots](#screenshots)
 - [Key features](#key-features)
@@ -71,9 +126,12 @@ Third-Party Risk Management (TPRM) at scale for a bank assessing ~120–130 vend
 
 ## Key features
 
-- **Coverage-complete questionnaire** — 54 unified controls → all 116 MAS/RBI/SEBI clauses, each question *born mapped* with typed relationships (Equal / Subset / Superset / Intersection). Build-time coverage verification (no orphan clauses).
+- **Categorized, collapsible questionnaire** — 54 unified controls grouped into expandable sections by control family (per-section progress + expand/collapse-all), each question *born mapped* to all 116 MAS/RBI/SEBI clauses with typed relationships (Equal / Subset / Superset / Intersection). Build-time coverage verification (no orphan clauses).
+- **Assessor authority — override & act-on-behalf** — the assessor/DBS can **override any engine verdict** with a mandatory rationale (the human is the final authority), and **enter answers / upload evidence on behalf of a vendor** (onsite or remote), recorded with full attribution so it's never mistaken for vendor self-attestation. Marking a control *Not Applicable* **requires a reasoning statement**.
+- **Contracts & Compliance workspace** (`/compliance`) — upload the **Contract/MSA** with a mandatory-clause checklist mapped to MAS/RBI/SEBI; a **company obligations & requirements** register; **compliances / certification** tracking with auto-derived expiry status; a **custom compliance list**; and **auto-reminders** for contract renewals, obligations, and cert expiries.
 - **Pluggable processing engine** (Root-configurable): **Static Pipeline** ($0 rules), **Local AI Model** (Ollama / Claude Code Personal, $0), **AI Integrated** (Claude / OpenAI GPT / xAI Grok / Google Gemini), **Hybrid** (static-first, AI only on low confidence). Always falls back to static — never breaks, never wastes a token.
 - **Content-aware evidence extraction** — PDF/DOCX/text + image OCR, cached by SHA-256 content hash and shared by both the static and AI engines.
+- **Animated workflow deck** (`/workflow`) — a public, slide-by-slide presentation of the whole lifecycle with embedded feature screenshots.
 - **Evidence viewer** — view an uploaded file's extracted text with the control's keywords highlighted.
 - **Regulatory auto-mapping** — live MAS/RBI/SEBI clause coverage with an animated tracer graph.
 - **Threat exposure mapping** — control gaps mapped to threats (Account Takeover, Data Exfiltration, Ransomware, Supply-chain, …) tagged with MITRE ATT&CK tactics.
@@ -244,10 +302,11 @@ New vendors can self-onboard at `/onboard`, or be invited by an assessor/root.
 
 **Assessor / Root**
 1. Pick a vendor in the console; review each control's response + evidence (with the **evidence viewer**).
-2. **Adjudicate** (static or AI) → verdict, risk, confidence, citations, and **live MAS/RBI/SEBI mapping**.
+2. **Adjudicate** (static or AI) → verdict, risk, confidence, citations, and **live MAS/RBI/SEBI mapping**. **Override** the verdict with a rationale, or **act on behalf** of the vendor (onsite/remote) to enter answers/evidence directly.
 3. Send non-compliant findings **back for remediation**.
-4. View the **portfolio** (threat exposure, concentration), **consolidated rating + approval authority**, and **export to PDF**.
-5. Root configures the **processing engine**, manages **tokens**, **invites vendors**, and reviews the **audit log**.
+4. Track **contracts, obligations, certifications and reminders** in the **Compliance** workspace.
+5. View the **portfolio** (threat exposure, concentration), **consolidated rating + approval authority**, and **export to PDF**.
+6. Root configures the **processing engine**, manages **tokens**, **invites vendors**, and reviews the **audit log**.
 
 ---
 
@@ -261,8 +320,15 @@ New vendors can self-onboard at `/onboard`, or be invited by an assessor/root.
 | GET/POST/PUT | `/api/submission` | vendor (own) / assessor (read) | Answers + submit |
 | POST | `/api/upload` | vendor | Evidence upload + extraction |
 | GET | `/api/evidence` | assessor/root | Extracted text + keywords |
-| POST | `/api/adjudicate` | assessor/root | Run the configured engine |
+| POST | `/api/adjudicate` | assessor/root | Run the configured engine (returns an assessor override if set) |
+| POST/DELETE | `/api/override` | assessor/root | Set / clear an assessor verdict override (rationale required) |
+| POST | `/api/submission` (`?vendorId=&mode=onsite\|remote`) | assessor/root | Enter an answer **on behalf** of a vendor (attributed) |
 | POST | `/api/review` | assessor/root | Send finding back for remediation |
+| GET/POST/PATCH/DELETE | `/api/contracts` | read: all · write: assessor/root | Contracts/MSA + mandatory-clause checklist |
+| GET/POST/PATCH/DELETE | `/api/obligations` | read: all · write: assessor/root | Obligations & requirements register |
+| GET/POST/PATCH/DELETE | `/api/compliances` | read: all · write: assessor/root | Compliance / certification tracking |
+| GET/POST/DELETE | `/api/compliance-catalog` | read: all · write: assessor/root | Custom compliance list |
+| GET | `/api/reminders` | assessor/root/viewer | Due/overdue renewals, obligations, expiries |
 | GET/PUT | `/api/settings` | read: root/viewer · write: root | Processing engine + tokens (masked) |
 | GET | `/api/portfolio` | assessor/root/viewer | Portfolio + threat aggregation |
 | GET | `/api/vendors` · `/api/users` | per role | Vendor picker / user list |
