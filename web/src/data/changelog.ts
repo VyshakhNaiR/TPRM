@@ -2,10 +2,14 @@
 // /changelog page. Newest release first. Keep entries factual and user-facing.
 
 export type ChangeType = "security" | "feature" | "fix" | "ai" | "ux" | "infra";
+// Who a change is most relevant to. The /changelog page filters by the viewer's
+// role: Assessors see assessor + all; Root sees root + all (developer/platform).
+export type Audience = "assessor" | "root" | "all";
 
 export interface ChangeItem {
   type: ChangeType;
   text: string;
+  audience?: Audience; // default "all"
 }
 export interface Release {
   version: string;
@@ -25,6 +29,27 @@ export const CHANGE_LABEL: Record<ChangeType, string> = {
 };
 
 export const CHANGELOG: Release[] = [
+  {
+    version: "0.7.0",
+    date: "2026-06-25",
+    title: "Workflow overhaul",
+    summary:
+      "Assessor-led lifecycle, certification-as-evidence, and tighter validation — plus platform changes. This page is role-filtered: assessors see workflow changes, Root sees developer/platform changes.",
+    items: [
+      // --- Assessor-facing (functional workflow) ---
+      { type: "feature", audience: "assessor", text: "Questionnaire modification — assessor-led vendor onboarding captures engagement type (due-diligence / existing), infrastructure (on-prem / cloud+CSP / hybrid), and applicable regulators (RBI/MAS/SEBI/None)." },
+      { type: "feature", audience: "assessor", text: "Existing vendors: upload the agreement + last TPRM audit report at onboarding; prior Non-Compliant findings are parsed and spotlighted as a focus list." },
+      { type: "feature", audience: "assessor", text: "Certification-as-evidence — vendors satisfy a requirement with an accredited cert (ISO 27001 / PCI DSS AOC / SOC 2 Type 2), uploaded once to a certification library and referenced per control; a cert only counts for its eligible domain (over-claims are flagged)." },
+      { type: "ai", audience: "assessor", text: "Processing & adjudication — engine verdicts with a verified 'attestation' tier for certifications; assessor verdict override with a mandatory rationale (the human is the final authority)." },
+      { type: "fix", audience: "assessor", text: "Validation — every requirement must be completed (evidence / certification / N-A-with-reason) before a vendor can submit; Not-Applicable always needs a reasoning statement." },
+      { type: "ux", audience: "assessor", text: "Cleaner assessor console — a collapsible sidebar replaces the crowded top bar." },
+      // --- Root-facing (developer / platform) ---
+      { type: "infra", audience: "root", text: "Removed the SBOM analyzer feature; the Cost dashboard is now Root-only." },
+      { type: "security", audience: "root", text: "Removed the 'act on behalf' capability — the vendor is the sole data-entry party; assessor writes are rejected (the assessor validates via override)." },
+      { type: "infra", audience: "root", text: "New 'Customer' role (replaces Viewer) with a read-only holistic portfolio (PDF/Excel export)." },
+      { type: "infra", audience: "root", text: "Custom-questionnaire upload/auto-map relocated into onboarding (gated by regulators = None)." },
+    ],
+  },
   {
     version: "0.5.0",
     date: "2026-06-21",

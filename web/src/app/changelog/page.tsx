@@ -104,9 +104,17 @@ export default function Changelog() {
         <p className="mt-1 text-sm text-muted">Release notes for the TPRM platform. Newest first.</p>
       </div>
 
-      {/* Releases */}
+      <p className="mb-6 inline-flex items-center gap-2 rounded-lg border border-border bg-surface/50 px-3 py-1.5 text-xs text-muted">
+        Showing changes relevant to <span className="font-semibold text-fg capitalize">{role}</span>
+        {role === "assessor" ? " (workflow & functional)" : " (developer & platform)"}
+      </p>
+
+      {/* Releases — items are filtered to the viewer's role */}
       <ol className="relative space-y-10 border-l border-border pl-6">
-        {CHANGELOG.map((rel) => (
+        {CHANGELOG.map((rel) => {
+          const items = rel.items.filter((it) => !it.audience || it.audience === "all" || it.audience === role);
+          if (items.length === 0) return null;
+          return (
           <li key={rel.version} className="relative">
             <span className="absolute -left-[31px] top-1 grid h-4 w-4 place-items-center rounded-full border border-brand/50 bg-bg">
               <span className="h-1.5 w-1.5 rounded-full bg-brand" />
@@ -119,7 +127,7 @@ export default function Changelog() {
             </div>
             {rel.summary && <p className="mt-2 max-w-2xl text-sm text-muted">{rel.summary}</p>}
             <ul className="mt-4 space-y-2.5">
-              {rel.items.map((it, i) => (
+              {items.map((it, i) => (
                 <li key={i} className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface/50 p-3 sm:flex-row sm:items-start sm:gap-3">
                   <TypeChip type={it.type} />
                   <span className="text-sm leading-relaxed text-fg">{it.text}</span>
@@ -127,11 +135,12 @@ export default function Changelog() {
               ))}
             </ul>
           </li>
-        ))}
+          );
+        })}
       </ol>
 
       <p className="mt-10 text-xs text-muted">
-        Visible to Root and Assessor users. Security and reliability items reflect production-enforced controls (the demo retains its conveniences).
+        Role-filtered: Assessors see workflow/functional changes, Root sees developer/platform changes.
       </p>
     </main>
   );
