@@ -1,32 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { currentSession, can } from "@/lib/auth";
-import { getSubmission, saveAnswer, submitAll, type Answer, type AnswerSource } from "@/lib/store";
+import { currentSession } from "@/lib/auth";
+import { getSubmission, saveAnswer, submitAll, type Answer } from "@/lib/store";
 import { CONTROLS } from "@/data/seed";
 import { readJson, asBool } from "@/lib/http";
-import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
 const MAX_RESPONSE_CHARS = 20_000;
 
-// Resolve who we're writing for + the provenance of the write.
-// - Vendor: writes only their own submission (source "vendor").
-// - Assessor/Root: may write ON BEHALF of a vendor (onsite or remote) — recorded
-//   with attribution so it's never mistaken for a vendor self-attestation.
+// The VENDOR is the sole data-entry party. Vendors write only their own
+// submission; assessors/root may READ any vendor's submission but never write it
+// (they validate via verdict override). No on-behalf entry.
 async function resolve(req: NextRequest, write: boolean) {
   const s = await currentSession();
   if (!s) return { error: "unauthenticated" as const };
-  if (s.role === "vendor") return { vendorId: s.vendorId!, source: "vendor" as AnswerSource, by: s.username };
-  // assessor / root
+  if (s.role === "vendor") return { vendorId: s.vendorId!, by: s.username };
+  if (write) return { error: "forbidden" as const }; // assessors don't write vendor answers
   const q = req.nextUrl.searchParams.get("vendorId");
-  if (write) {
-    if (!can(s.role, "submission:write:onbehalf")) return { error: "forbidden" as const };
-    if (!q) return { error: "vendorId required for on-behalf entry" as const };
-    const mode = (req.nextUrl.searchParams.get("mode") || "remote").toLowerCase();
-    const source: AnswerSource = mode === "onsite" ? "assessor_onsite" : "assessor_remote";
-    return { vendorId: q, source, by: s.username, onBehalf: true as const };
-  }
-  return { vendorId: q || "apex", source: "vendor" as AnswerSource, by: s.username };
+  return { vendorId: q || "apex", by: s.username };
 }
 
 export async function GET(req: NextRequest) {
@@ -44,7 +35,7 @@ export async function POST(req: NextRequest) {
   if (!controlId || !CONTROLS.some((c) => c.id === controlId)) {
     return NextResponse.json({ error: "valid controlId required" }, { status: 400 });
   }
-  const patch: Partial<Answer> = { source: r.source, enteredBy: r.by };
+  const patch: Partial<Answer> = { source: "vendor", enteredBy: r.by };
   if (response !== undefined) patch.response = String(response ?? "").slice(0, MAX_RESPONSE_CHARS);
   if (applicable !== undefined) {
     const b = asBool(applicable);
@@ -67,7 +58,6 @@ export async function POST(req: NextRequest) {
   }
   if (certMappingNote !== undefined) patch.certMappingNote = String(certMappingNote ?? "").slice(0, MAX_RESPONSE_CHARS);
   const out = await saveAnswer(r.vendorId, controlId, patch);
-  if ("onBehalf" in r && r.onBehalf) audit(r.by, "entered answer on behalf", `${controlId} · ${r.vendorId} · ${r.source}`);
   return NextResponse.json(out);
 }
 

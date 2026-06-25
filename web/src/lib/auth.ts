@@ -25,7 +25,6 @@ export type Permission =
   | "submission:read:own"
   | "submission:write:own"
   | "submission:read:all"
-  | "submission:write:onbehalf" // assessor enters answers/evidence FOR a vendor (onsite/remote)
   | "verdict:override" // assessor overrules the engine verdict with rationale
   | "adjudicate:run"
   | "users:read"
@@ -36,11 +35,11 @@ export type Permission =
 
 const MATRIX: Record<Role, Permission[]> = {
   root: [
-    "submission:read:own", "submission:write:own", "submission:read:all", "submission:write:onbehalf",
+    "submission:read:own", "submission:write:own", "submission:read:all",
     "verdict:override", "adjudicate:run",
     "users:read", "users:manage", "settings:read", "settings:manage", "audit:read",
   ],
-  assessor: ["submission:read:all", "submission:write:onbehalf", "verdict:override", "adjudicate:run", "audit:read"],
+  assessor: ["submission:read:all", "verdict:override", "adjudicate:run", "audit:read"],
   vendor: ["submission:read:own", "submission:write:own"],
   // Customer: read-only holistic consumer (bank stakeholder). Sees the portfolio
   // of vendors + per-requirement compliance detail; no write, no admin/settings.

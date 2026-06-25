@@ -1,12 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
-  ArrowLeft,
   FileText,
   Paperclip,
   Sparkles,
@@ -15,18 +13,14 @@ import {
   XCircle,
   CircleDashed,
   Quote,
-  LogOut,
   Inbox,
-  UserCog,
-  Upload,
   Gavel,
-  ShieldCheck,
   AlertTriangle,
+  Menu,
 } from "lucide-react";
 import { CONTROLS, FRAMEWORKS, VENDOR } from "@/data/seed";
 import type { Adjudication, Verdict, Risk } from "@/data/types";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { LogoLockup } from "@/components/animated-logo";
+import { Sidebar } from "@/components/sidebar";
 import { TracerGraph } from "@/components/tracer-graph";
 import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat, Toaster, ErrorState, errorMessage, useToasts } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -51,16 +45,8 @@ export default function Console() {
   // "Focus: prior findings first" — sorts prior Non-Compliant controls to the top of the list (off by default).
   const [focusPrior, setFocusPrior] = useState(false);
 
-  // "Acting on behalf of vendor" mode (assessor enters data for the vendor).
-  const [onBehalf, setOnBehalf] = useState(false);
-  const [onBehalfMode, setOnBehalfMode] = useState<"onsite" | "remote">("onsite");
-  // Draft state for the on-behalf answer editor (keyed to the selected control).
-  const [obResponse, setObResponse] = useState("");
-  const [obApplicable, setObApplicable] = useState(true);
-  const [obJustification, setObJustification] = useState("");
-  const [obSaving, setObSaving] = useState(false);
-  const [obUploading, setObUploading] = useState(false);
-  const obFileRef = useRef<HTMLInputElement>(null);
+  // Off-canvas navigation drawer (small screens only).
+  const [navOpen, setNavOpen] = useState(false);
 
   // Override form (per-control verdict override).
   const [overrideOpen, setOverrideOpen] = useState(false);
@@ -140,19 +126,11 @@ export default function Console() {
   );
   const selectedPriorNote = isPriorNC(selected) ? priorFindings?.[selected]?.note : undefined;
 
-  // Re-fetch the selected vendor's submission (used after on-behalf saves / overrides).
+  // Re-fetch the selected vendor's submission (used after overrides).
   const refreshSubmission = useCallback(async () => {
     const s = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
     if (s.ok) setSubmission(await s.json());
   }, [vendorId]);
-
-  // Keep the on-behalf draft in sync with the currently selected control's answer.
-  useEffect(() => {
-    const a = submission?.answers?.[selected];
-    setObResponse(a?.response ?? "");
-    setObApplicable(a?.applicable !== false);
-    setObJustification(a?.justification ?? "");
-  }, [selected, submission]);
 
   // Close the override form when switching controls.
   useEffect(() => { setOverrideOpen(false); }, [selected]);
@@ -222,52 +200,6 @@ export default function Console() {
       toast.success("Finding returned to vendor for remediation.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not send this finding back.");
-    }
-  }
-
-  // Save the vendor's answer ON BEHALF of the vendor (attribution recorded server-side).
-  async function saveOnBehalf() {
-    setObSaving(true);
-    try {
-      const res = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}&mode=${onBehalfMode}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          controlId: selected,
-          response: obApplicable ? obResponse : "",
-          applicable: obApplicable,
-          justification: obApplicable ? undefined : obJustification,
-        }),
-      });
-      if (!res.ok) throw new Error(await errorMessage(res, "Could not save the answer on behalf of the vendor."));
-      setSubmission(await res.json());
-      toast.success(`Saved on behalf of ${selectedVendorName} (${onBehalfMode}).`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not save the answer on behalf of the vendor.");
-    } finally {
-      setObSaving(false);
-    }
-  }
-
-  // Upload evidence ON BEHALF of the vendor for the selected control.
-  async function uploadOnBehalf(file: File) {
-    setObUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("controlId", selected);
-      fd.append("vendorId", vendorId);
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) throw new Error(await errorMessage(res, "Could not upload evidence."));
-      const data = await res.json();
-      if (data.submission) setSubmission(data.submission);
-      else await refreshSubmission();
-      toast.success(`Evidence “${file.name}” uploaded on behalf of ${selectedVendorName}.`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not upload evidence.");
-    } finally {
-      setObUploading(false);
-      if (obFileRef.current) obFileRef.current.value = "";
     }
   }
 
@@ -370,91 +302,45 @@ export default function Console() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-7xl px-5 pb-20">
-      {/* Top bar */}
-      <header className="sticky top-0 z-20 -mx-5 mb-5 flex items-center justify-between border-b border-border bg-bg/70 px-5 py-3 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="grid h-8 w-8 place-items-center rounded-lg border border-border text-muted hover:text-fg">
-            <ArrowLeft size={16} />
-          </Link>
-          <LogoLockup markWidth={38} />
-          <span className="hidden text-sm text-muted sm:inline">· Assessor Console</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <select
-            value={vendorId}
-            onChange={(e) => setVendorId(e.target.value)}
-            className="rounded-xl border border-border bg-surface/60 px-2.5 py-2 text-xs outline-none focus:border-brand"
-            aria-label="Select vendor"
-          >
-            {vendors.map((v) => (
-              <option key={v.vendorId} value={v.vendorId}>{v.name} ({v.answered}/{v.total})</option>
-            ))}
-          </select>
-          <button
-            onClick={() => setOnBehalf((v) => !v)}
-            aria-pressed={onBehalf}
-            title="Enter vendor data on behalf of the selected vendor"
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-medium transition",
-              onBehalf ? "border-mas/60 bg-mas/15 text-mas shadow-glow-sm" : "border-border text-muted hover:text-fg"
-            )}
-          >
-            <UserCog size={14} />
-            <span className="hidden sm:inline">{onBehalf ? "Acting on behalf" : "Act on behalf"}</span>
-          </button>
-          {onBehalf && (
-            <select
-              value={onBehalfMode}
-              onChange={(e) => setOnBehalfMode(e.target.value as "onsite" | "remote")}
-              className="rounded-xl border border-mas/40 bg-mas/10 px-2.5 py-2 text-xs text-mas outline-none focus:border-mas"
-              aria-label="On-behalf data entry mode"
-            >
-              <option value="onsite">onsite</option>
-              <option value="remote">remote</option>
-            </select>
-          )}
-          <Link href="/onboard" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Onboard</Link>
-          <Link href="/compliance" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Compliance</Link>
-          <Link href="/portfolio" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Portfolio</Link>
-          <Link href="/changelog" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Changelog</Link>
-          <button
-            onClick={runAll}
-            disabled={runningAll}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
-          >
-            <PlayCircle size={16} />
-            {runningAll ? `Adjudicating… ${runProgress.done} / ${runProgress.total}` : "Run AI on all controls"}
-          </button>
-          <ThemeToggle />
-          <button
-            onClick={async () => { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }}
-            className="grid h-9 w-9 place-items-center rounded-xl border border-border text-muted hover:text-fg"
-            aria-label="Sign out"
-          >
-            <LogOut size={16} />
-          </button>
-        </div>
-      </header>
+    <div className="flex min-h-screen">
+      <Sidebar activeHref="/console" mobileOpen={navOpen} onMobileClose={() => setNavOpen(false)} />
 
-      {/* On-behalf-of mode banner — visually distinct so it's never mistaken for vendor self-entry */}
-      <AnimatePresence>
-        {onBehalf && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="mb-5 overflow-hidden"
-          >
-            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-mas/50 bg-mas/10 px-4 py-3 text-sm">
-              <UserCog size={16} className="shrink-0 text-mas" />
-              <span className="font-semibold text-mas">You are entering data on behalf of {selectedVendorName}</span>
-              <span className="text-muted">— recorded as <span className="font-semibold text-mas">{onBehalfMode}</span> assessor entry, not vendor self-entry.</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <main className="min-w-0 flex-1 pb-20">
+        {/* Slim header — hamburger (mobile), title, vendor picker + Run AI */}
+        <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-border bg-bg/70 px-5 py-3 backdrop-blur">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setNavOpen(true)}
+              aria-label="Open navigation"
+              className="grid h-9 w-9 place-items-center rounded-xl border border-border text-muted hover:text-fg md:hidden"
+            >
+              <Menu size={18} />
+            </button>
+            <span className="text-sm font-semibold">Assessor Console</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <select
+              value={vendorId}
+              onChange={(e) => setVendorId(e.target.value)}
+              className="rounded-xl border border-border bg-surface/60 px-2.5 py-2 text-xs outline-none focus:border-brand"
+              aria-label="Select vendor"
+            >
+              {vendors.map((v) => (
+                <option key={v.vendorId} value={v.vendorId}>{v.name} ({v.answered}/{v.total})</option>
+              ))}
+            </select>
+            <button
+              onClick={runAll}
+              disabled={runningAll}
+              className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
+            >
+              <PlayCircle size={16} />
+              {runningAll ? `Adjudicating… ${runProgress.done} / ${runProgress.total}` : "Run AI on all controls"}
+            </button>
+          </div>
+        </header>
+
+        <div className="mx-auto max-w-7xl px-5 pt-5">
 
       {/* Vendor + summary */}
       <section className="mb-6 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -628,7 +514,6 @@ export default function Console() {
                 <Panel icon={Paperclip} title="Vendor response & evidence">
                   {ans && (ans.response || (ans.evidence?.length ?? 0) > 0 || ans.applicable === false) ? (
                     <>
-                      <ProvenanceBadge source={ans.source} enteredBy={ans.enteredBy} />
                       <p className="font-medium text-fg">{ans.applicable === false ? "(marked Not Applicable)" : ans.response || "(blank)"}</p>
                       {ans.applicable === false && ans.justification && (
                         <p className="mt-1 text-muted"><span className="font-semibold text-fg">Justification: </span>{ans.justification}</p>
@@ -663,89 +548,6 @@ export default function Console() {
               )}
             </div>
           </motion.div>
-
-          {/* On-behalf-of editor — only visible while acting on behalf of the vendor */}
-          <AnimatePresence>
-            {onBehalf && (
-              <motion.div
-                key="ob-editor"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.3 }}
-                className="rounded-2xl border border-mas/50 bg-mas/5 p-5"
-              >
-                <div className="mb-3 flex items-center gap-2">
-                  <UserCog size={16} className="text-mas" />
-                  <span className="text-sm font-semibold text-mas">Enter on behalf of {selectedVendorName}</span>
-                  <span className="rounded-full border border-mas/40 bg-mas/10 px-2 py-0.5 text-[10px] font-semibold text-mas">{onBehalfMode}</span>
-                </div>
-
-                <fieldset className="mb-3 flex flex-wrap items-center gap-4 text-xs">
-                  <legend className="sr-only">Control applicability</legend>
-                  <label className="inline-flex items-center gap-1.5">
-                    <input type="radio" name="ob-applicable" checked={obApplicable} onChange={() => setObApplicable(true)} className="accent-mas" />
-                    Applicable
-                  </label>
-                  <label className="inline-flex items-center gap-1.5">
-                    <input type="radio" name="ob-applicable" checked={!obApplicable} onChange={() => setObApplicable(false)} className="accent-mas" />
-                    Not applicable
-                  </label>
-                </fieldset>
-
-                {obApplicable ? (
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-muted">Vendor response</span>
-                    <textarea
-                      value={obResponse}
-                      onChange={(e) => setObResponse(e.target.value)}
-                      rows={3}
-                      placeholder="Capture the vendor's response to this control…"
-                      className="w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-mas"
-                    />
-                  </label>
-                ) : (
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-muted">Justification (why not applicable)</span>
-                    <textarea
-                      value={obJustification}
-                      onChange={(e) => setObJustification(e.target.value)}
-                      rows={3}
-                      placeholder="Explain why this control does not apply to the vendor…"
-                      className="w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-mas"
-                    />
-                  </label>
-                )}
-
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={saveOnBehalf}
-                    disabled={obSaving}
-                    className="inline-flex items-center gap-2 rounded-xl bg-mas px-4 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
-                  >
-                    <ShieldCheck size={15} />
-                    {obSaving ? "Saving…" : "Save on behalf"}
-                  </button>
-
-                  <input
-                    ref={obFileRef}
-                    type="file"
-                    className="hidden"
-                    aria-hidden="true"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadOnBehalf(f); }}
-                  />
-                  <button
-                    onClick={() => obFileRef.current?.click()}
-                    disabled={obUploading}
-                    className="inline-flex items-center gap-2 rounded-xl border border-mas/50 bg-mas/10 px-4 py-2 text-sm font-semibold text-mas transition hover:brightness-110 disabled:opacity-60"
-                  >
-                    <Upload size={15} />
-                    {obUploading ? "Uploading…" : "Upload evidence"}
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
 
           {/* AI result */}
           <AnimatePresence mode="wait">
@@ -950,12 +752,14 @@ export default function Console() {
 
         </section>
       </div>
+        </div>
 
-      {/* Evidence viewer — real modal dialog */}
-      <EvidenceDialog view={evidenceView} onClose={() => setEvidenceView(null)} />
+        {/* Evidence viewer — real modal dialog */}
+        <EvidenceDialog view={evidenceView} onClose={() => setEvidenceView(null)} />
 
-      <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
-    </main>
+        <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
+      </main>
+    </div>
   );
 }
 
@@ -1061,16 +865,6 @@ function Highlighted({ text, keywords }: { text: string; keywords: string[] }) {
   } catch {
     return <>{text}</>;
   }
-}
-
-function ProvenanceBadge({ source, enteredBy }: { source?: string; enteredBy?: string }) {
-  if (source !== "assessor_onsite" && source !== "assessor_remote") return null;
-  const mode = source === "assessor_onsite" ? "onsite" : "remote";
-  return (
-    <span className="mb-1.5 inline-flex items-center gap-1 rounded-full border border-mas/40 bg-mas/10 px-2 py-0.5 text-[10px] font-semibold text-mas">
-      <UserCog size={11} /> Entered by assessor · {mode}{enteredBy ? ` (${enteredBy})` : ""}
-    </span>
-  );
 }
 
 // Format an ISO date as DD-MMM-YYYY (e.g. 14-Mar-2025); returns "" for invalid/empty input.
