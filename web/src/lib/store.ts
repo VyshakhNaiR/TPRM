@@ -17,12 +17,18 @@ export interface Evidence {
   hash?: string; // SHA-256 -> shared extraction cache
   textChars?: number; // extracted text length (0 = nothing readable)
 }
+// Who supplied an answer/evidence — kept for audit integrity so an
+// assessor-entered ("on behalf") answer can never be mistaken for a vendor
+// self-attestation.
+export type AnswerSource = "vendor" | "assessor_onsite" | "assessor_remote";
 export interface Answer {
   response: string;
   applicable: boolean;
   justification?: string;
   evidence: Evidence[];
   updatedAt: string;
+  source?: AnswerSource; // default "vendor"
+  enteredBy?: string; // username who entered it (assessor when on-behalf)
 }
 // Assessor finding sent back to the vendor for remediation (the "(New)" cycle).
 export interface Review {
@@ -33,12 +39,21 @@ export interface Review {
   status: "open" | "resubmitted";
   reviewedAt: string;
 }
+// Assessor override of the engine verdict — the human is the final authority.
+export interface Override {
+  verdict: string;
+  risk: string;
+  rationale: string; // mandatory — why the assessor overruled the engine
+  by: string;
+  at: string;
+}
 export interface Submission {
   vendorId: string;
   status: "draft" | "submitted";
   submittedAt?: string;
   answers: Record<string, Answer>;
   reviews?: Record<string, Review>;
+  overrides?: Record<string, Override>;
   updatedAt: string;
 }
 
@@ -116,6 +131,30 @@ export function submitAll(vendorId: string): Promise<Submission> {
     s.status = "submitted";
     s.submittedAt = now();
     write(s);
+    return s;
+  });
+}
+
+// Assessor override of the engine verdict for a control. Authoritative — the
+// adjudicate route returns this over any AI/static result when present.
+export function setOverride(
+  vendorId: string,
+  controlId: string,
+  o: { verdict: string; risk: string; rationale: string; by: string }
+): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    s.overrides ??= {};
+    s.overrides[controlId] = { ...o, at: now() };
+    s.updatedAt = now();
+    write(s);
+    return s;
+  });
+}
+export function clearOverride(vendorId: string, controlId: string): Promise<Submission> {
+  return withLock(`subm:${vendorId}`, () => {
+    const s = getSubmission(vendorId);
+    if (s.overrides) { delete s.overrides[controlId]; s.updatedAt = now(); write(s); }
     return s;
   });
 }

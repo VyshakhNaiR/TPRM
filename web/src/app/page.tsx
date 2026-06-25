@@ -21,6 +21,9 @@ export default function Home() {
       <header className="flex items-center justify-between py-6">
         <LogoLockup markWidth={44} />
         <div className="flex items-center gap-3">
+          <Link href="/workflow" className="hidden text-sm text-muted hover:text-fg sm:block">
+            Workflow
+          </Link>
           <Link href="/login" className="hidden text-sm text-muted hover:text-fg sm:block">
             Sign in
           </Link>

@@ -126,6 +126,7 @@ export default function Admin() {
       <header className="sticky top-0 z-20 -mx-5 mb-6 flex items-center justify-between border-b border-border bg-bg/70 px-5 py-3 backdrop-blur">
         <div className="flex items-center gap-3"><LogoLockup markWidth={38} /><span className="hidden text-sm text-muted sm:inline">· Root Console</span></div>
         <div className="flex items-center gap-3">
+          <Link href="/compliance" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Compliance</Link>
           <Link href="/changelog" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Changelog</Link>
           <span className={cn("rounded-full border px-2.5 py-1 text-xs font-semibold", ROLE_TONE[role])}>{role}{!canManage && " · read-only"}</span>
           <ThemeToggle />

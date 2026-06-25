@@ -25,6 +25,8 @@ export type Permission =
   | "submission:read:own"
   | "submission:write:own"
   | "submission:read:all"
+  | "submission:write:onbehalf" // assessor enters answers/evidence FOR a vendor (onsite/remote)
+  | "verdict:override" // assessor overrules the engine verdict with rationale
   | "adjudicate:run"
   | "users:read"
   | "users:manage"
@@ -34,10 +36,11 @@ export type Permission =
 
 const MATRIX: Record<Role, Permission[]> = {
   root: [
-    "submission:read:own", "submission:write:own", "submission:read:all", "adjudicate:run",
+    "submission:read:own", "submission:write:own", "submission:read:all", "submission:write:onbehalf",
+    "verdict:override", "adjudicate:run",
     "users:read", "users:manage", "settings:read", "settings:manage", "audit:read",
   ],
-  assessor: ["submission:read:all", "adjudicate:run", "audit:read"],
+  assessor: ["submission:read:all", "submission:write:onbehalf", "verdict:override", "adjudicate:run", "audit:read"],
   vendor: ["submission:read:own", "submission:write:own"],
   viewer: ["submission:read:all", "users:read", "settings:read", "audit:read"],
 };

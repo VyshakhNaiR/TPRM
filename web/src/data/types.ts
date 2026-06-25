@@ -62,5 +62,5 @@ export interface Adjudication {
   recommendations: string[];
   evidenceChecks: AdjudicationItem[];
   citations: string[];
-  source: "ai" | "static" | "fallback";
+  source: "ai" | "static" | "fallback" | "override";
 }

@@ -41,7 +41,25 @@ export async function POST(req: NextRequest) {
   if (!c) return NextResponse.json({ error: "unknown control" }, { status: 404 });
 
   audit(session!.username, "adjudicated control", `${c.id} · ${vendorId}`);
-  const stored = getSubmission(vendorId).answers[c.id];
+  const submission = getSubmission(vendorId);
+
+  // Assessor override is authoritative — the human is the final authority, so it
+  // takes precedence over any AI/static result (and skips re-running the engine).
+  const ov = submission.overrides?.[c.id];
+  if (ov) {
+    return NextResponse.json({
+      verdict: ov.verdict as Adjudication["verdict"],
+      risk: ov.risk as Adjudication["risk"],
+      confidence: 1,
+      riskStatement: ov.rationale,
+      recommendations: [],
+      evidenceChecks: [{ requirement: c.rfi.slice(0, 90), provided: true, substantiates: ov.verdict === "Compliant", note: `Assessor override by ${ov.by}.` }],
+      citations: [`assessor override · ${ov.by}`],
+      source: "override",
+    } satisfies Adjudication);
+  }
+
+  const stored = submission.answers[c.id];
   const hasRealSubmission = !!stored && (!!stored.response || (stored.evidence?.length ?? 0) > 0 || stored.applicable === false);
 
   // Live vendor submission -> run the Root-configured processing backend.
