@@ -415,11 +415,8 @@ export default function Console() {
             </select>
           )}
           <Link href="/onboard" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Onboard</Link>
-          <Link href="/custom-questionnaire" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Custom Q</Link>
           <Link href="/compliance" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Compliance</Link>
           <Link href="/portfolio" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Portfolio</Link>
-          <Link href="/sbom" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">SBOM</Link>
-          <Link href="/cost" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Cost</Link>
           <Link href="/changelog" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Changelog</Link>
           <button
             onClick={runAll}

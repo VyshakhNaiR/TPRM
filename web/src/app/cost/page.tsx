@@ -31,7 +31,7 @@ export default function CostDashboard() {
     (async () => {
       try {
         const me = await (await fetch("/api/me")).json();
-        if (!me.session) router.push("/login");
+        if (me.session?.role !== "root") router.push("/login"); // Cost is a Root-only platform view
       } catch {
         router.push("/login");
       }
