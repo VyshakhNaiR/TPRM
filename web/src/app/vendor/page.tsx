@@ -80,6 +80,24 @@ export default function VendorPortal() {
     if (groups.length) setOpen({ [groups[0][0]]: true });
   }, [groups]);
 
+  // On first load with prior findings, also auto-expand sections that contain flagged controls.
+  const priorExpanded = useRef(false);
+  useEffect(() => {
+    if (priorExpanded.current || !sub) return;
+    const pf = (sub as unknown as { priorFindings?: Record<string, { verdict: string }> }).priorFindings;
+    if (!pf) return;
+    const flaggedFamilies = new Set(
+      CONTROLS.filter((c) => pf[c.id]?.verdict === "Non-Compliant").map((c) => c.family)
+    );
+    if (flaggedFamilies.size === 0) return;
+    priorExpanded.current = true;
+    setOpen((o) => {
+      const next = { ...o };
+      flaggedFamilies.forEach((f) => { next[f] = true; });
+      return next;
+    });
+  }, [sub]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -109,6 +127,16 @@ export default function VendorPortal() {
   useEffect(() => () => { Object.values(debounceTimers.current).forEach(clearTimeout); }, []);
 
   const answers = sub?.answers ?? {};
+  // Prior-audit findings parsed at onboarding (existing vendors only — guard for undefined).
+  const priorFindings = (sub as unknown as { priorFindings?: Record<string, { verdict: string; note?: string; confirmed?: boolean }> })?.priorFindings;
+  const isPriorNC = useCallback(
+    (id: string) => priorFindings?.[id]?.verdict === "Non-Compliant",
+    [priorFindings]
+  );
+  const priorNCCount = useMemo(
+    () => (priorFindings ? Object.values(priorFindings).filter((f) => f?.verdict === "Non-Compliant").length : 0),
+    [priorFindings]
+  );
   const answered = CONTROLS.filter((c) => isAnswered(answers[c.id])).length;
   const pct = Math.round((answered / CONTROLS.length) * 100);
   const submitted = sub?.status === "submitted";
@@ -316,6 +344,17 @@ export default function VendorPortal() {
         </div>
       </section>
 
+      {/* Prior-audit focus banner — existing vendors with findings parsed at onboarding */}
+      {priorNCCount > 0 && (
+        <div className="mb-4 flex items-start gap-2 rounded-2xl border border-warn/50 bg-warn/10 px-4 py-3 text-sm">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
+          <span className="text-fg">
+            <span className="font-semibold text-warn">{priorNCCount}</span> requirement{priorNCCount === 1 ? " was" : "s were"} flagged in your last audit
+            <span className="text-muted"> — please prioritise these.</span>
+          </span>
+        </div>
+      )}
+
       {/* questionnaire — collapsible accordion grouped by control family */}
       <div className="space-y-3">
         {groups.map(([family, items]) => {
@@ -383,6 +422,11 @@ export default function VendorPortal() {
                             <div className="flex items-start justify-between gap-3">
                               <div>
                                 <span className="font-mono text-[10px] text-muted">{c.id}</span>
+                                {isPriorNC(c.id) && (
+                                  <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] font-semibold text-warn align-middle">
+                                    <AlertTriangle size={10} /> Was non-compliant last audit
+                                  </span>
+                                )}
                                 <p className="text-sm font-medium leading-snug">{c.question}</p>
                               </div>
                               {saving[c.id] && <Loader2 size={14} className="mt-1 shrink-0 animate-spin text-muted" />}

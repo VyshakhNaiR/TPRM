@@ -21,6 +21,7 @@ import {
   Upload,
   Gavel,
   ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { CONTROLS, FRAMEWORKS, VENDOR } from "@/data/seed";
 import type { Adjudication, Verdict, Risk } from "@/data/types";
@@ -47,6 +48,8 @@ export default function Console() {
   const [runningAll, setRunningAll] = useState(false);
   const [runProgress, setRunProgress] = useState({ done: 0, total: 0 });
   const [evidenceView, setEvidenceView] = useState<{ filename: string; text: string; keywords: string[]; method: string } | null>(null);
+  // "Focus: prior findings first" — sorts prior Non-Compliant controls to the top of the list (off by default).
+  const [focusPrior, setFocusPrior] = useState(false);
 
   // "Acting on behalf of vendor" mode (assessor enters data for the vendor).
   const [onBehalf, setOnBehalf] = useState(false);
@@ -121,6 +124,21 @@ export default function Console() {
   const overrides = submission?.overrides as Record<string, { verdict: string; risk: string; rationale: string; by: string; at: string }> | undefined;
   const activeOverride = overrides?.[selected];
   const selectedVendorName = vendors.find((v) => v.vendorId === vendorId)?.name ?? VENDOR.name;
+
+  // Prior-audit findings (parsed at onboarding). Most vendors won't have these — guard for undefined.
+  const priorFindings = submission?.priorFindings as
+    | Record<string, { verdict: string; note?: string; confirmed?: boolean }>
+    | undefined;
+  const priorAuditAt = submission?.priorAuditAt as string | undefined;
+  const isPriorNC = useCallback(
+    (id: string) => priorFindings?.[id]?.verdict === "Non-Compliant",
+    [priorFindings]
+  );
+  const priorNCCount = useMemo(
+    () => (priorFindings ? Object.values(priorFindings).filter((f) => f?.verdict === "Non-Compliant").length : 0),
+    [priorFindings]
+  );
+  const selectedPriorNote = isPriorNC(selected) ? priorFindings?.[selected]?.note : undefined;
 
   // Re-fetch the selected vendor's submission (used after on-behalf saves / overrides).
   const refreshSubmission = useCallback(async () => {
@@ -396,6 +414,8 @@ export default function Console() {
               <option value="remote">remote</option>
             </select>
           )}
+          <Link href="/onboard" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Onboard</Link>
+          <Link href="/custom-questionnaire" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">Custom Q</Link>
           <Link href="/compliance" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Compliance</Link>
           <Link href="/portfolio" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg sm:block">Portfolio</Link>
           <Link href="/sbom" className="hidden rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg lg:block">SBOM</Link>
@@ -497,6 +517,31 @@ export default function Console() {
         </div>
       </section>
 
+      {/* Prior-audit focus summary — only when the selected vendor has parsed prior findings */}
+      {priorNCCount > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warn/50 bg-warn/10 px-4 py-3 text-sm">
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
+            <span className="text-fg">
+              <span className="font-semibold text-warn">{priorNCCount}</span> requirement{priorNCCount === 1 ? " was" : "s were"} Non-Compliant in the last audit
+              {formatAuditDate(priorAuditAt) && <span className="text-muted"> ({formatAuditDate(priorAuditAt)})</span>}
+              <span className="text-muted"> — re-verify these first.</span>
+            </span>
+          </div>
+          <button
+            onClick={() => setFocusPrior((v) => !v)}
+            aria-pressed={focusPrior}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition",
+              focusPrior ? "border-warn/60 bg-warn/20 text-warn shadow-glow-sm" : "border-border text-muted hover:text-fg"
+            )}
+          >
+            <AlertTriangle size={13} />
+            {focusPrior ? "Prior findings first: on" : "Focus: prior findings first"}
+          </button>
+        </div>
+      )}
+
       <div className="grid gap-5 md:grid-cols-[260px_1fr] lg:grid-cols-[300px_1fr]">
         {/* Control list — caps height & scrolls on every breakpoint so the detail pane stays reachable */}
         <aside className="max-h-[40vh] space-y-3 overflow-y-auto pr-1 md:max-h-[calc(100vh-7rem)]">
@@ -506,9 +551,13 @@ export default function Console() {
                 {family}
               </div>
               <div className="space-y-1.5">
-                {items.map((c) => {
+                {(focusPrior
+                  ? [...items].sort((a, b) => Number(isPriorNC(b.id)) - Number(isPriorNC(a.id)))
+                  : items
+                ).map((c) => {
                   const r = results[c.id];
                   const isSel = c.id === selected;
+                  const priorNC = isPriorNC(c.id);
                   return (
                     <button
                       key={c.id}
@@ -531,6 +580,11 @@ export default function Console() {
                         )}
                       </div>
                       <div className="mt-1 line-clamp-2 text-xs font-medium">{c.question}</div>
+                      {priorNC && (
+                        <span className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[9px] font-semibold text-warn">
+                          <AlertTriangle size={9} /> Prior finding
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -560,6 +614,17 @@ export default function Console() {
                 <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted">applies: {control.applicability}</span>
               </div>
               <h2 className="mt-2 text-lg font-semibold leading-snug">{control.question}</h2>
+
+              {isPriorNC(selected) && (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-warn/50 bg-warn/10 p-3 text-xs">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
+                  <div>
+                    <span className="font-semibold text-warn">Prior audit: Non-Compliant</span>
+                    {selectedPriorNote && <span className="text-fg"> — {selectedPriorNote}</span>}
+                    <span className="text-muted"> Re-verify before adjudicating.</span>
+                  </div>
+                </div>
+              )}
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <Panel icon={FileText} title="RFI — evidence requested">{control.rfi || "—"}</Panel>
@@ -1009,6 +1074,15 @@ function ProvenanceBadge({ source, enteredBy }: { source?: string; enteredBy?: s
       <UserCog size={11} /> Entered by assessor · {mode}{enteredBy ? ` (${enteredBy})` : ""}
     </span>
   );
+}
+
+// Format an ISO date as DD-MMM-YYYY (e.g. 14-Mar-2025); returns "" for invalid/empty input.
+function formatAuditDate(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${String(d.getDate()).padStart(2, "0")}-${months[d.getMonth()]}-${d.getFullYear()}`;
 }
 
 function Panel({ icon: Icon, title, children }: { icon: any; title: string; children: React.ReactNode }) {
