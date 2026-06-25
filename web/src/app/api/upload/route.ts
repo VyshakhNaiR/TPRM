@@ -5,7 +5,7 @@ import { saveUpload } from "@/lib/storage";
 import { extractFile } from "@/lib/extract";
 import { getSettings } from "@/lib/settings";
 import { validateUpload } from "@/lib/filetypes";
-import { CONTROLS } from "@/data/seed";
+import { findControl } from "@/lib/scope";
 
 export const runtime = "nodejs";
 
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const controlId = form.get("controlId") as string | null;
   if (!file || !controlId) return NextResponse.json({ error: "file and controlId required" }, { status: 400 });
   // Only accept evidence against a real control (no arbitrary store keys).
-  if (!CONTROLS.some((c) => c.id === controlId)) return NextResponse.json({ error: "unknown control" }, { status: 404 });
+  if (!findControl(controlId)) return NextResponse.json({ error: "unknown control" }, { status: 404 });
 
   const bytes = Buffer.from(await file.arrayBuffer());
   if (bytes.length === 0) return NextResponse.json({ error: "empty file" }, { status: 400 });

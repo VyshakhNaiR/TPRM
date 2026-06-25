@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentSession } from "@/lib/auth";
 import { getSubmission, saveAnswer, submitAll, type Answer } from "@/lib/store";
-import { CONTROLS } from "@/data/seed";
+import { findControl, controlsForVendorId, modeForVendorId } from "@/lib/scope";
 import { readJson, asBool } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ async function resolve(req: NextRequest, write: boolean) {
 export async function GET(req: NextRequest) {
   const r = await resolve(req, false);
   if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.error === "unauthenticated" ? 401 : 403 });
-  return NextResponse.json(getSubmission(r.vendorId));
+  return NextResponse.json({ ...getSubmission(r.vendorId), questionnaireMode: modeForVendorId(r.vendorId) });
 }
 
 export async function POST(req: NextRequest) {
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   const parsed = await readJson<{ controlId?: string; response?: unknown; applicable?: unknown; justification?: unknown }>(req);
   if ("error" in parsed) return parsed.error;
   const { controlId, response, applicable, justification, coverage, certType, certMappingNote } = parsed.data as any;
-  if (!controlId || !CONTROLS.some((c) => c.id === controlId)) {
+  if (!controlId || !findControl(controlId)) {
     return NextResponse.json({ error: "valid controlId required" }, { status: 400 });
   }
   const patch: Partial<Answer> = { source: "vendor", enteredBy: r.by };
@@ -78,14 +78,15 @@ export async function PUT(req: NextRequest) {
   // (evidence / certification / not-applicable-with-reason). Incomplete submission
   // is blocked, and N/A without a reason is reported specifically.
   const sub = getSubmission(r.vendorId);
-  const missingReason = CONTROLS.filter((c) => {
+  const scope = controlsForVendorId(r.vendorId);
+  const missingReason = scope.filter((c) => {
     const a = sub.answers[c.id];
     return a && (a.coverage === "not_applicable" || a.applicable === false) && !(a.justification && a.justification.trim());
   }).map((c) => c.id);
   if (missingReason.length) {
     return NextResponse.json({ error: "Each control marked Not Applicable needs a reasoning statement.", missing: missingReason }, { status: 400 });
   }
-  const incomplete = CONTROLS.filter((c) => {
+  const incomplete = scope.filter((c) => {
     const a = sub.answers[c.id];
     if (!answerComplete(a)) return true;
     // Certification answers need the referenced cert present in the library.
@@ -94,7 +95,7 @@ export async function PUT(req: NextRequest) {
   }).map((c) => c.id);
   if (incomplete.length) {
     return NextResponse.json(
-      { error: `Complete all ${CONTROLS.length} requirements before submitting — ${incomplete.length} still pending.`, incomplete },
+      { error: `Complete all ${scope.length} requirements before submitting — ${incomplete.length} still pending.`, incomplete },
       { status: 400 }
     );
   }

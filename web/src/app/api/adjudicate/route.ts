@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CONTROLS } from "@/data/seed";
 import type { Adjudication } from "@/data/types";
+import { findControl } from "@/lib/scope";
 import { getSubmission } from "@/lib/store";
 import { getSettings } from "@/lib/settings";
 import { adjudicate, staticAdjudicate, type EffAnswer } from "@/lib/adjudicator";
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
   const parsed = await readJson<{ controlId?: string; vendorId?: string }>(req);
   if ("error" in parsed) return parsed.error;
   const { controlId, vendorId = "apex" } = parsed.data;
-  const c = CONTROLS.find((x) => x.id === controlId);
+  const c = findControl(controlId || "");
   if (!c) return NextResponse.json({ error: "unknown control" }, { status: 404 });
 
   audit(session!.username, "adjudicated control", `${c.id} · ${vendorId}`);

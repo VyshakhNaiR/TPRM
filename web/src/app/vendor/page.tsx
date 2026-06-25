@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle, ShieldCheck, Trash2 } from "lucide-react";
 import { CONTROLS } from "@/data/seed";
+import { BASELINE_CONTROLS } from "@/data/baseline";
 import type { CertType, CoverageMode, Submission, VendorCert } from "@/lib/store";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -83,14 +84,21 @@ export default function VendorPortal() {
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const toast = useToasts();
 
+  // Which questionnaire is this vendor assigned? The mode rides along on the
+  // /api/submission response (not part of the core Submission type), so read it
+  // via a narrow cast and pick the active control set. Defaults to the full
+  // regulatory CONTROLS until the submission has loaded.
+  const questionnaireMode = (sub as unknown as { questionnaireMode?: "standard" | "hygiene" } | null)?.questionnaireMode;
+  const controls = questionnaireMode === "hygiene" ? BASELINE_CONTROLS : CONTROLS;
+
   const groups = useMemo(() => {
     const m = new Map<string, typeof CONTROLS>();
-    for (const c of CONTROLS) {
+    for (const c of controls) {
       if (!m.has(c.family)) m.set(c.family, []);
       m.get(c.family)!.push(c);
     }
     return Array.from(m.entries());
-  }, []);
+  }, [controls]);
 
   // Default: expand the first section only, collapse the rest (tidy, not a wall).
   useEffect(() => {
@@ -104,7 +112,7 @@ export default function VendorPortal() {
     const pf = (sub as unknown as { priorFindings?: Record<string, { verdict: string }> }).priorFindings;
     if (!pf) return;
     const flaggedFamilies = new Set(
-      CONTROLS.filter((c) => pf[c.id]?.verdict === "Non-Compliant").map((c) => c.family)
+      controls.filter((c) => pf[c.id]?.verdict === "Non-Compliant").map((c) => c.family)
     );
     if (flaggedFamilies.size === 0) return;
     priorExpanded.current = true;
@@ -113,7 +121,7 @@ export default function VendorPortal() {
       flaggedFamilies.forEach((f) => { next[f] = true; });
       return next;
     });
-  }, [sub]);
+  }, [sub, controls]);
 
   // Load the vendor's certification library (used both by the panel and to decide
   // whether a certification-mode answer is complete).
@@ -171,9 +179,9 @@ export default function VendorPortal() {
   // Cert types the vendor has uploaded to their library — a certification answer is
   // only complete when its certType is present here.
   const availableCertTypes = useMemo(() => new Set(certs.map((c) => c.certType)), [certs]);
-  const answered = CONTROLS.filter((c) => isAnswered(answers[c.id], availableCertTypes)).length;
-  const pct = Math.round((answered / CONTROLS.length) * 100);
-  const allComplete = answered === CONTROLS.length;
+  const answered = controls.filter((c) => isAnswered(answers[c.id], availableCertTypes)).length;
+  const pct = controls.length ? Math.round((answered / controls.length) * 100) : 0;
+  const allComplete = controls.length > 0 && answered === controls.length;
   const submitted = sub?.status === "submitted";
   const needsAttention = Object.values((sub?.reviews ?? {}) as Record<string, { status: string }>).filter((r) => r.status === "open").length;
 
@@ -325,22 +333,22 @@ export default function VendorPortal() {
   // Open every section that contains a flagged control so the vendor can see what to fix.
   const revealMissing = useCallback((ids: Set<string>) => {
     if (!ids.size) return;
-    const families = new Set(CONTROLS.filter((c) => ids.has(c.id)).map((c) => c.family));
+    const families = new Set(controls.filter((c) => ids.has(c.id)).map((c) => c.family));
     setOpen((o) => {
       const next = { ...o };
       families.forEach((f) => { next[f] = true; });
       return next;
     });
-  }, []);
+  }, [controls]);
 
   async function submitAll() {
     // Client-side gate first for immediate feedback (matches the server's rule):
     // 1) N/A controls without a reason, 2) any other incomplete control.
-    const clientMissing = CONTROLS.filter((c) => {
+    const clientMissing = controls.filter((c) => {
       const a = answers[c.id];
       return a && coverageOf(a) === "not_applicable" && !a.justification?.trim();
     }).map((c) => c.id);
-    const clientIncomplete = CONTROLS.filter(
+    const clientIncomplete = controls.filter(
       (c) => !isAnswered(answers[c.id], availableCertTypes) && !clientMissing.includes(c.id)
     ).map((c) => c.id);
     if (clientMissing.length || clientIncomplete.length) {
@@ -421,7 +429,7 @@ export default function VendorPortal() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold">Security Questionnaire</h1>
-            <p className="text-sm text-muted">{answered} of {CONTROLS.length} complete · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
+            <p className="text-sm text-muted">{answered} of {controls.length} complete · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
             <SaveIndicator state={saveState} savedAt={savedAt} />
           </div>
           <button
@@ -438,7 +446,7 @@ export default function VendorPortal() {
           <motion.div className="h-full rounded-full bg-brand" animate={{ width: `${pct}%` }} transition={{ duration: 0.5 }} />
         </div>
         <div className="mt-3 flex items-center justify-between">
-          <span className="text-xs font-medium text-muted">{answered} / {CONTROLS.length} complete</span>
+          <span className="text-xs font-medium text-muted">{answered} / {controls.length} complete</span>
           <button
             onClick={() => setAll(!allOpen)}
             className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted transition hover:border-brand/50 hover:text-fg"
@@ -447,6 +455,17 @@ export default function VendorPortal() {
           </button>
         </div>
       </section>
+
+      {/* Baseline questionnaire banner — vendors with no specific regulatory scope */}
+      {questionnaireMode === "hygiene" && (
+        <div className="mb-4 flex items-start gap-2 rounded-2xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
+          <ShieldCheck size={16} className="mt-0.5 shrink-0 text-brand" />
+          <span className="text-fg">
+            <span className="font-semibold">Basic Security Hygiene questionnaire</span>
+            <span className="text-muted"> — a baseline set for vendors with no specific regulatory scope.</span>
+          </span>
+        </div>
+      )}
 
       {/* Prior-audit focus banner — existing vendors with findings parsed at onboarding */}
       {priorNCCount > 0 && (

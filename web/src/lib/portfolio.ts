@@ -2,6 +2,7 @@ import { CONTROLS, FRAMEWORKS } from "@/data/seed";
 import { THREATS, threatsForFamily } from "./threats";
 import { listVendors } from "./users";
 import { getSubmission } from "./store";
+import { controlsForVendorId } from "./scope";
 
 // Deterministic 0..1 hash so synthetic verdicts are stable across renders.
 function h(s: string): number {
@@ -77,8 +78,10 @@ export function buildPortfolio() {
 
   const vendorRows = vendors.map((v) => {
     let compliant = 0, nc = 0, na = 0;
+    const set = controlsForVendorId(v.id); // baseline vs standard per vendor
+    const isStandard = set === CONTROLS; // framework coverage only applies to regulated vendors
     const compliantClauses: Record<string, Set<string>> = { MAS: new Set(), RBI: new Set(), SEBI: new Set() };
-    for (const c of CONTROLS) {
+    for (const c of set) {
       const verdict = verdictOf(v, c);
       domainAgg[c.family] ??= { compliant: 0, nc: 0 };
       if (verdict === "Compliant") {
@@ -89,7 +92,7 @@ export function buildPortfolio() {
         for (const t of threatsForFamily(c.family)) { threatCount[t].vendors.add(v.id); threatCount[t].controls++; }
       } else na++;
     }
-    for (const f of FRAMEWORKS) { fwTotal[f.id] += f.clauses.length; fwCompliant[f.id] += compliantClauses[f.id].size; }
+    if (isStandard) for (const f of FRAMEWORKS) { fwTotal[f.id] += f.clauses.length; fwCompliant[f.id] += compliantClauses[f.id].size; }
     const applicable = compliant + nc;
     const posture = applicable ? Math.round((compliant / applicable) * 100) : 0;
     return { id: v.id, name: v.name, tier: v.tier, region: v.region, cloud: v.cloud, compliant, nc, na, posture, rating: ratingFor(posture) };
@@ -187,7 +190,8 @@ export interface CustomerRow {
 
 function rollup(v: any) {
   let compliant = 0, nc = 0, na = 0;
-  for (const c of CONTROLS) {
+  const set = controlsForVendorId(v.id); // hygiene vendors roll up over the baseline set
+  for (const c of set) {
     const verdict = verdictOf(v, c);
     if (verdict === "Compliant") compliant++;
     else if (verdict === "Non-Compliant") nc++;
@@ -195,13 +199,13 @@ function rollup(v: any) {
   }
   const applicable = compliant + nc;
   const posture = applicable ? Math.round((compliant / applicable) * 100) : 0;
-  return { compliant, nc, na, posture };
+  return { compliant, nc, na, posture, total: set.length };
 }
 
 export function customerList(): CustomerRow[] {
   const now = Date.now();
   return vendorObjs().map((v) => {
-    const { compliant, nc, na, posture } = rollup(v);
+    const { compliant, nc, na, posture, total } = rollup(v);
     const nextDueAt = addMonths(v.initiatedAt, CADENCE_MONTHS[v.tier] ?? 12);
     return {
       vendorId: v.id,
@@ -210,7 +214,7 @@ export function customerList(): CustomerRow[] {
       posture,
       rating: ratingFor(posture),
       compliant, nc, na,
-      total: CONTROLS.length,
+      total,
       regulators: Array.isArray(v.regulators) ? v.regulators : [],
       initiatedAt: v.initiatedAt,
       nextDueAt,
@@ -230,7 +234,7 @@ export function vendorRequirementDetail(vendorId: string): { vendor: CustomerRow
   const v = vendorObjs().find((x) => x.id === vendorId);
   if (!v) return { vendor: null, controls: [] };
   const row = customerList().find((r) => r.vendorId === vendorId) ?? null;
-  const controls: RequirementDetail[] = CONTROLS.map((c) => ({
+  const controls: RequirementDetail[] = controlsForVendorId(vendorId).map((c) => ({
     id: c.id,
     family: c.family,
     question: c.question,

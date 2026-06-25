@@ -19,6 +19,7 @@ import {
   Menu,
 } from "lucide-react";
 import { CONTROLS, FRAMEWORKS, VENDOR } from "@/data/seed";
+import { BASELINE_CONTROLS } from "@/data/baseline";
 import type { Adjudication, Verdict, Risk } from "@/data/types";
 import { Sidebar } from "@/components/sidebar";
 import { TracerGraph } from "@/components/tracer-graph";
@@ -35,6 +36,11 @@ export default function Console() {
   const [loaded, setLoaded] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const toast = useToasts();
+
+  // The selected vendor may be on the standard regulatory set or the Basic Security
+  // Hygiene baseline. Default to CONTROLS until the submission loads.
+  const hygieneMode = submission?.questionnaireMode === "hygiene";
+  const controls = hygieneMode ? BASELINE_CONTROLS : CONTROLS;
 
   const [selected, setSelected] = useState(CONTROLS[0].id);
   const [results, setResults] = useState<Record<string, Adjudication>>({});
@@ -91,6 +97,17 @@ export default function Console() {
     return () => { cancelled = true; };
   }, [vendorId]);
 
+  // When the active control set changes (vendor switches between standard and
+  // hygiene), the currently selected id may no longer exist (e.g. an "NI-…" id
+  // while the vendor is now on the "HYG-…" set). Reset to the first control and
+  // clear stale results so nothing crashes during the transition.
+  useEffect(() => {
+    if (!controls.some((c) => c.id === selected)) {
+      setSelected(controls[0]?.id ?? "");
+      setResults({});
+    }
+  }, [controls, selected]);
+
   async function openEvidence(ev: any) {
     setEvidenceView({ filename: ev.filename, text: "", keywords: [], method: "loading" });
     try {
@@ -103,7 +120,8 @@ export default function Console() {
     }
   }
 
-  const control = CONTROLS.find((c) => c.id === selected)!;
+  // May be undefined for one render while `controls` and `selected` re-sync.
+  const control = controls.find((c) => c.id === selected);
   const result = results[selected];
   const ans = submission?.answers?.[selected];
   const review = submission?.reviews?.[selected];
@@ -160,7 +178,7 @@ export default function Console() {
 
   // Run remaining controls with bounded concurrency (4 at a time) + live progress.
   async function runAll() {
-    const pending = CONTROLS.filter((c) => !results[c.id]).map((c) => c.id);
+    const pending = controls.filter((c) => !results[c.id]).map((c) => c.id);
     if (pending.length === 0) return;
     setRunningAll(true);
     setRunProgress({ done: 0, total: pending.length });
@@ -264,24 +282,24 @@ export default function Console() {
     };
     for (const f of FRAMEWORKS) map[f.id].total = f.clauses.length;
     const compliant: Record<string, Set<string>> = { MAS: new Set(), RBI: new Set(), SEBI: new Set() };
-    for (const c of CONTROLS) {
+    for (const c of controls) {
       if (results[c.id]?.verdict === "Compliant") {
         for (const m of c.mappings) compliant[m.framework].add(m.clauseId);
       }
     }
     for (const k of ["MAS", "RBI", "SEBI"]) map[k].covered = compliant[k].size;
     return map;
-  }, [results]);
+  }, [results, controls]);
 
   // group the control library by family for the sidebar
   const groups = useMemo(() => {
-    const m = new Map<string, typeof CONTROLS>();
-    for (const c of CONTROLS) {
+    const m = new Map<string, typeof controls>();
+    for (const c of controls) {
       if (!m.has(c.family)) m.set(c.family, []);
       m.get(c.family)!.push(c);
     }
     return Array.from(m.entries());
-  }, []);
+  }, [controls]);
 
   const totalClauses = FRAMEWORKS.reduce((n, f) => n + f.clauses.length, 0);
   const consolidated = consolidatedRating(Object.values(results).filter((r) => r.verdict === "Non-Compliant").map((r) => r.risk));
@@ -294,7 +312,7 @@ export default function Console() {
           (a) => a?.response?.trim() || (a?.evidence?.length ?? 0) > 0 || a?.applicable === false
         )
       : false;
-  const hasDemoContent = vendorId === "apex" && CONTROLS.some((c) => c.demo);
+  const hasDemoContent = vendorId === "apex" && controls.some((c) => c.demo);
   const showEmptyState = loaded && !hasSubmissionContent && !hasDemoContent && Object.keys(results).length === 0;
 
   if (loadError && !loaded) {
@@ -351,7 +369,14 @@ export default function Console() {
             </div>
             <div>
               <div className="text-xs uppercase tracking-wider text-muted">Vendor under assessment</div>
-              <div className="mt-1 text-xl font-bold">{selectedVendorName}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="text-xl font-bold">{selectedVendorName}</span>
+                {hygieneMode && (
+                  <span className="rounded-full border border-border bg-surface-2/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    Basic Security Hygiene
+                  </span>
+                )}
+              </div>
               <div className="mt-0.5 text-sm text-muted">{submission?.status === "submitted" ? "Submitted for review" : "Assessment in progress"}</div>
             </div>
           </div>
@@ -374,7 +399,7 @@ export default function Console() {
           <div className="flex-1 space-y-2.5">
             <div className="mb-1 flex items-center justify-between">
               <span className="text-xs font-semibold">Regulatory coverage</span>
-              <span className="text-[10px] text-muted">{CONTROLS.length} controls · {totalClauses} clauses mapped</span>
+              <span className="text-[10px] text-muted">{controls.length} controls · {totalClauses} clauses mapped</span>
             </div>
             {FRAMEWORKS.map((f) => {
               const cv = coverage[f.id];
@@ -489,6 +514,7 @@ export default function Console() {
               </p>
             </div>
           )}
+          {control && (
           <motion.div key={control.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
             <div className="glass rounded-2xl p-5">
               <div className="flex flex-wrap items-center gap-2">
@@ -548,12 +574,13 @@ export default function Console() {
               )}
             </div>
           </motion.div>
+          )}
 
           {/* AI result */}
           <AnimatePresence mode="wait">
             {result && (
               <motion.div
-                key={control.id + "-res"}
+                key={selected + "-res"}
                 initial={{ opacity: 0, y: 14 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
@@ -741,7 +768,8 @@ export default function Console() {
             )}
           </AnimatePresence>
 
-          {/* Tracer auto-mapping graph */}
+          {/* Tracer auto-mapping graph — empty for Basic Security Hygiene (no clause mappings) */}
+          {control && (
           <div className="glass rounded-2xl p-5">
             <div className="mb-1 flex items-center gap-2">
               <span className="text-sm font-semibold">Regulatory auto-mapping</span>
@@ -749,6 +777,7 @@ export default function Console() {
             </div>
             <TracerGraph control={control} frameworks={FRAMEWORKS} verdict={result?.verdict} active={!!result} />
           </div>
+          )}
 
         </section>
       </div>
