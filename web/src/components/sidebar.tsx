@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Gauge,
   Building2,
-  ShieldCheck,
   LayoutGrid,
   History,
   LogOut,
@@ -14,6 +13,13 @@ import {
   PanelLeftOpen,
   X,
 } from "lucide-react";
+
+const ROLE_TONE: Record<string, string> = {
+  root: "text-mas",
+  assessor: "text-brand",
+  vendor: "text-ok",
+  customer: "text-muted",
+};
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LogoLockup, AnimatedLogo } from "@/components/animated-logo";
 import { cn } from "@/lib/utils";
@@ -23,7 +29,6 @@ type NavItem = { href: string; label: string; icon: typeof Gauge };
 const NAV: NavItem[] = [
   { href: "/console", label: "Console", icon: Gauge },
   { href: "/onboard", label: "Onboard vendor", icon: Building2 },
-  { href: "/compliance", label: "Compliance", icon: ShieldCheck },
   { href: "/portfolio", label: "Portfolio", icon: LayoutGrid },
   { href: "/changelog", label: "Changelog", icon: History },
 ];
@@ -146,6 +151,14 @@ function SidebarInner({
   onToggleCollapsed?: () => void;
   onNavigate: () => void;
 }) {
+  const [user, setUser] = useState<{ username: string; name: string; role: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.session) setUser(d.session); })
+      .catch(() => {});
+  }, []);
+
   return (
     <div className="flex h-full flex-col">
       {/* Logo */}
@@ -157,7 +170,29 @@ function SidebarInner({
 
       {/* Nav */}
       <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-        {NAV.map((item) => {
+        {/* Vendor onboarding — pinned above the rest, visually distinct */}
+        <Link
+          href="/onboard"
+          onClick={onNavigate}
+          aria-current={activeHref === "/onboard" ? "page" : undefined}
+          title={collapsed ? "Onboard vendor" : undefined}
+          className={cn(
+            "group mb-2 flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm font-semibold transition",
+            collapsed && "justify-center px-0",
+            activeHref === "/onboard"
+              ? "border-ok/60 bg-ok/10 text-ok shadow-glow-sm"
+              : "border-ok/30 bg-ok/5 text-ok hover:border-ok/60 hover:bg-ok/10"
+          )}
+        >
+          <Building2 size={18} className="shrink-0" />
+          {!collapsed && <span className="truncate">Onboard vendor</span>}
+        </Link>
+
+        <div className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted/60">
+          {!collapsed && "Navigation"}
+        </div>
+
+        {NAV.filter((item) => item.href !== "/onboard").map((item) => {
           const active = item.href === activeHref;
           const Icon = item.icon;
           return (
@@ -182,8 +217,21 @@ function SidebarInner({
         })}
       </nav>
 
-      {/* Footer: collapse toggle (desktop), theme, sign out */}
+      {/* Footer: user chip, collapse toggle (desktop), theme, sign out */}
       <div className="shrink-0 space-y-1 border-t border-border p-2">
+        {user && (
+          <div className={cn("flex items-center gap-2 rounded-xl border border-border/60 bg-surface-2/40 px-2.5 py-2 mb-1", collapsed && "justify-center px-0")}>
+            <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand/20 text-xs font-bold text-brand">
+              {(user.name || user.username)[0].toUpperCase()}
+            </div>
+            {!collapsed && (
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium">{user.name || user.username}</div>
+                <div className={cn("text-[10px] font-semibold", ROLE_TONE[user.role] ?? "text-muted")}>{user.role}</div>
+              </div>
+            )}
+          </div>
+        )}
         {onToggleCollapsed && (
           <button
             onClick={onToggleCollapsed}

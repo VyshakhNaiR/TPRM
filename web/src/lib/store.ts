@@ -48,6 +48,7 @@ export interface Review {
   risk: string;
   riskStatement: string;
   recommendations: string[];
+  note?: string;
   status: "open" | "resubmitted";
   reviewedAt: string;
 }
@@ -147,7 +148,7 @@ export function addEvidence(vendorId: string, controlId: string, ev: Evidence): 
     return s;
   });
 }
-export function setReview(vendorId: string, controlId: string, r: { verdict: string; risk: string; riskStatement: string; recommendations: string[] }): Promise<Submission> {
+export function setReview(vendorId: string, controlId: string, r: { verdict: string; risk: string; riskStatement: string; recommendations: string[]; note?: string }): Promise<Submission> {
   return withLock(`subm:${vendorId}`, () => {
     const s = getSubmission(vendorId);
     s.reviews ??= {};

@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   if (!can(s?.role, "adjudicate:run")) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const parsed = await readJson<any>(req);
   if ("error" in parsed) return parsed.error;
-  const { vendorId, controlId, verdict, risk, riskStatement, recommendations } = parsed.data;
+  const { vendorId, controlId, verdict, risk, riskStatement, recommendations, note } = parsed.data;
   if (!vendorId || !controlId || !CONTROLS.some((c) => c.id === controlId)) {
     return NextResponse.json({ error: "valid vendorId and controlId required" }, { status: 400 });
   }
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     risk: RISKS.has(risk) ? risk : "Medium Risk",
     riskStatement: typeof riskStatement === "string" ? riskStatement.slice(0, 5000) : "",
     recommendations: Array.isArray(recommendations) ? recommendations.map((r) => String(r).slice(0, 1000)).slice(0, 20) : [],
+    note: typeof note === "string" ? note.slice(0, 5000) : undefined,
   });
   audit(s!.username, "returned for remediation", `${controlId} · ${vendorId}`);
   return NextResponse.json({ ok: true, review: sub.reviews?.[controlId] });

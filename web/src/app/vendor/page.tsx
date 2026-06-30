@@ -1,15 +1,43 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle, ShieldCheck, Trash2 } from "lucide-react";
+import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle, ShieldCheck, Trash2, MessageCircle, X, Lock } from "lucide-react";
 import { CONTROLS } from "@/data/seed";
 import { BASELINE_CONTROLS } from "@/data/baseline";
 import type { CertType, CoverageMode, Submission, VendorCert } from "@/lib/store";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ErrorState, Toaster, errorMessage, useToasts } from "@/components/ui";
+
+function CompletionRing({ pct }: { pct: number }) {
+  const r = 26;
+  const circ = 2 * Math.PI * r;
+  const tone = pct >= 75 ? "var(--ok)" : pct >= 40 ? "var(--warn)" : "var(--brand)";
+  return (
+    <div className="relative grid shrink-0 place-items-center">
+      <svg width={68} height={68} className="-rotate-90">
+        <circle cx={34} cy={34} r={r} fill="none" stroke="rgb(var(--surface-2))" strokeWidth={6} />
+        <motion.circle
+          cx={34} cy={34} r={r}
+          fill="none"
+          stroke={`rgb(${tone})`}
+          strokeWidth={6}
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          initial={{ strokeDashoffset: circ }}
+          animate={{ strokeDashoffset: circ - (pct / 100) * circ }}
+          transition={{ duration: 1, ease: "easeOut" }}
+          style={{ filter: `drop-shadow(0 0 5px rgb(${tone} / 0.5))` }}
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="text-sm font-bold tabular-nums leading-none">{pct}%</span>
+      </div>
+    </div>
+  );
+}
 import { cn } from "@/lib/utils";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -82,7 +110,17 @@ export default function VendorPortal() {
   const certFileRef = useRef<HTMLInputElement | null>(null);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const scrollRestoreRef = useRef<number | null>(null);
   const toast = useToasts();
+
+  // CompliQ chatbot state
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatControlId, setChatControlId] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
 
   // Which questionnaire is this vendor assigned? The mode rides along on the
   // /api/submission response (not part of the core Submission type), so read it
@@ -162,8 +200,17 @@ export default function VendorPortal() {
     return () => { cancelled = true; };
   }, [router, reloadKey, loadCerts]);
 
+  // Restore scroll position after state updates (prevents page-top-jump on save).
+  useLayoutEffect(() => {
+    if (scrollRestoreRef.current !== null) {
+      window.scrollTo(0, scrollRestoreRef.current);
+      scrollRestoreRef.current = null;
+    }
+  });
+
   // flush any pending debounced autosave timers on unmount
   useEffect(() => () => { Object.values(debounceTimers.current).forEach(clearTimeout); }, []);
+
 
   const answers = sub?.answers ?? {};
   // Prior-audit findings parsed at onboarding (existing vendors only — guard for undefined).
@@ -214,6 +261,7 @@ export default function VendorPortal() {
           body: JSON.stringify({ controlId, ...patch }),
         });
         if (!res.ok) throw new Error(await errorMessage(res, "Could not save your answer."));
+        scrollRestoreRef.current = window.scrollY;
         setSub(await res.json());
         setSaveState("saved");
         setSavedAt(new Date());
@@ -267,6 +315,39 @@ export default function VendorPortal() {
       delete debounceTimers.current[controlId];
     }
   }
+
+  // CompliQ chatbot — ask for guidance on a specific control.
+  function openChat(controlId: string) {
+    setChatControlId(controlId);
+    setChatMessages([]);
+    setChatInput("");
+    setChatOpen(true);
+  }
+
+  async function sendChat() {
+    if (!chatInput.trim() || !chatControlId || chatLoading) return;
+    const msg = chatInput.trim();
+    setChatInput("");
+    const history = [...chatMessages, { role: "user" as const, content: msg }];
+    setChatMessages(history);
+    setChatLoading(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ controlId: chatControlId, message: msg, history: chatMessages }),
+      });
+      const data = res.ok ? await res.json() : null;
+      const reply = data?.reply ?? "Sorry, I couldn't get a response right now. Please try again.";
+      setChatMessages([...history, { role: "assistant", content: reply }]);
+    } catch {
+      setChatMessages([...history, { role: "assistant", content: "Connection error — please retry." }]);
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
+  }
+
 
   async function upload(controlId: string, file: File) {
     setUploading((s) => ({ ...s, [controlId]: true }));
@@ -426,24 +507,24 @@ export default function VendorPortal() {
 
       {/* progress + submit */}
       <section className="glass mb-6 rounded-2xl p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold">Security Questionnaire</h1>
-            <p className="text-sm text-muted">{answered} of {controls.length} complete · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
-            <SaveIndicator state={saveState} savedAt={savedAt} />
+        <div className="flex items-start gap-4">
+          <CompletionRing pct={pct} />
+          <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold">Security Questionnaire</h1>
+              <p className="text-sm text-muted">{answered} of {controls.length} complete · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
+              <SaveIndicator state={saveState} savedAt={savedAt} />
+            </div>
+            <button
+              onClick={submitAll}
+              disabled={submitting || submitted || !allComplete}
+              title={!submitted && !allComplete ? "Complete all requirements to submit" : undefined}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitted ? <CheckCircle2 size={16} /> : <Send size={16} />}
+              {submitted ? "Submitted" : submitting ? "Submitting…" : "Submit for review"}
+            </button>
           </div>
-          <button
-            onClick={submitAll}
-            disabled={submitting || submitted || !allComplete}
-            title={!submitted && !allComplete ? "Complete all requirements to submit" : undefined}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitted ? <CheckCircle2 size={16} /> : <Send size={16} />}
-            {submitted ? "Submitted" : submitting ? "Submitting…" : "Submit for review"}
-          </button>
-        </div>
-        <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-2">
-          <motion.div className="h-full rounded-full bg-brand" animate={{ width: `${pct}%` }} transition={{ duration: 0.5 }} />
         </div>
         <div className="mt-3 flex items-center justify-between">
           <span className="text-xs font-medium text-muted">{answered} / {controls.length} complete</span>
@@ -546,6 +627,7 @@ export default function VendorPortal() {
         )}
       </section>
 
+
       {/* questionnaire — collapsible accordion grouped by control family */}
       <div className="space-y-3">
         {groups.map(([family, items]) => {
@@ -575,9 +657,28 @@ export default function VendorPortal() {
                     </span>
                   )}
                 </div>
-                <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums", done === total ? "bg-ok/10 text-ok" : "bg-surface-2 text-muted")}>
-                  {done} / {total} complete
-                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex items-center gap-0.5">
+                    {items.map((c) => {
+                      const a = answers[c.id];
+                      const complete = isAnswered(a, availableCertTypes);
+                      const returned = sub.reviews?.[c.id]?.status === "open";
+                      return (
+                        <span
+                          key={c.id}
+                          title={`${c.id}: ${returned ? "returned" : complete ? "complete" : "pending"}`}
+                          className={cn(
+                            "inline-block h-1.5 w-1.5 rounded-full",
+                            returned ? "bg-danger" : complete ? "bg-ok" : "border border-border bg-surface-2"
+                          )}
+                        />
+                      );
+                    })}
+                  </div>
+                  <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium tabular-nums", done === total ? "bg-ok/10 text-ok" : "bg-surface-2 text-muted")}>
+                    {done} / {total}
+                  </span>
+                </div>
               </button>
 
               <AnimatePresence initial={false}>
@@ -637,8 +738,17 @@ export default function VendorPortal() {
                             )}
                             {rev && rev.status === "resubmitted" && <div className="mt-2 text-xs font-medium text-ok">✓ Resubmitted — awaiting assessor re-review.</div>}
 
-                            <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-surface-2/50 p-2 text-xs text-muted">
-                              <FileText size={12} className="mt-0.5 shrink-0" /><span>{c.rfi}</span>
+                            <div className="mt-2 flex items-start justify-between gap-2">
+                              <div className="flex flex-1 items-start gap-1.5 rounded-lg bg-surface-2/50 p-2 text-xs text-muted">
+                                <FileText size={12} className="mt-0.5 shrink-0" /><span>{c.rfi}</span>
+                              </div>
+                              <button
+                                onClick={() => openChat(c.id)}
+                                title="Ask CompliQ for evidence guidance"
+                                className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-brand/30 bg-brand/5 px-2 py-1.5 text-[11px] font-semibold text-brand hover:bg-brand/10 transition"
+                              >
+                                <MessageCircle size={11} /> Ask CompliQ
+                              </button>
                             </div>
 
                             {/* How are you addressing this? — three coverage modes */}
@@ -792,6 +902,13 @@ export default function VendorPortal() {
                                     </span>
                                   ))}
                                 </div>
+                                {/* Password hint for encrypted PDFs */}
+                                {!locked && (a?.evidence ?? []).length === 0 && (
+                                  <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted">
+                                    <Lock size={10} className="shrink-0" />
+                                    Uploading a password-protected PDF? Attach it and note the password in your response above so the assessor can access it.
+                                  </p>
+                                )}
                               </>
                             )}
 
@@ -809,6 +926,81 @@ export default function VendorPortal() {
           );
         })}
       </div>
+      {/* CompliQ chat panel — slides in from bottom-right */}
+      <AnimatePresence>
+        {chatOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 30, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 30, scale: 0.97 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed bottom-6 right-6 z-50 flex w-[min(95vw,380px)] flex-col glass rounded-2xl shadow-glow border border-border overflow-hidden"
+            style={{ maxHeight: "70vh" }}
+          >
+            {/* Chat header */}
+            <div className="flex items-center justify-between gap-2 border-b border-border bg-brand/10 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <MessageCircle size={16} className="text-brand" />
+                <span className="text-sm font-semibold text-brand">CompliQ</span>
+                {chatControlId && <span className="rounded-md bg-brand/10 px-1.5 py-0.5 font-mono text-[10px] text-brand">{chatControlId}</span>}
+              </div>
+              <button onClick={() => setChatOpen(false)} aria-label="Close CompliQ" className="grid h-7 w-7 place-items-center rounded-lg border border-border text-muted hover:text-fg"><X size={14} /></button>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-3" style={{ minHeight: 180 }}>
+              {chatMessages.length === 0 && (
+                <div className="text-center py-6 text-xs text-muted">
+                  <MessageCircle size={24} className="mx-auto mb-2 text-brand/40" />
+                  <p className="font-medium text-fg">Hi! I'm CompliQ.</p>
+                  <p className="mt-1">Ask me what evidence is typically needed for this control and I'll guide you.</p>
+                </div>
+              )}
+              {chatMessages.map((m, i) => (
+                <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+                  <div className={cn(
+                    "max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap",
+                    m.role === "user" ? "bg-brand text-white rounded-br-md" : "bg-surface-2 text-fg rounded-bl-md border border-border"
+                  )}>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="rounded-2xl rounded-bl-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+                    <Loader2 size={13} className="animate-spin" />
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input */}
+            <div className="border-t border-border p-3">
+              <div className="flex items-end gap-2">
+                <textarea
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                  placeholder="Ask about evidence requirements…"
+                  rows={2}
+                  disabled={chatLoading}
+                  className="flex-1 resize-none rounded-xl border border-border bg-surface/60 px-3 py-2 text-xs outline-none focus:border-brand disabled:opacity-60"
+                />
+                <button
+                  onClick={sendChat}
+                  disabled={chatLoading || !chatInput.trim()}
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
+                >
+                  <Send size={15} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
     </main>
   );

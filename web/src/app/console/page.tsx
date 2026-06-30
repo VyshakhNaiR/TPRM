@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import * as XLSX from "xlsx";
 import {
   Building2,
   FileText,
@@ -17,6 +18,10 @@ import {
   Gavel,
   AlertTriangle,
   Menu,
+  Loader2,
+  X,
+  Download,
+  ScrollText,
 } from "lucide-react";
 import { CONTROLS, FRAMEWORKS, VENDOR } from "@/data/seed";
 import { BASELINE_CONTROLS } from "@/data/baseline";
@@ -54,7 +59,23 @@ export default function Console() {
   // Off-canvas navigation drawer (small screens only).
   const [navOpen, setNavOpen] = useState(false);
 
+  // Audit log for assessors.
+  const [auditEntries, setAuditEntries] = useState<any[]>([]);
+  const [consoleTab, setConsoleTab] = useState<"controls" | "audit">("controls");
+
+  // Send-back-for-remediation modal (single control).
+  const [sendBackOpen, setSendBackOpen] = useState(false);
+  const [sendBackComment, setSendBackComment] = useState("");
+  const [sendBackSaving, setSendBackSaving] = useState(false);
+
+  // Bulk send-back modal (all Non-Compliant controls at once).
+  const [sendBackAllOpen, setSendBackAllOpen] = useState(false);
+  const [sendBackAllComment, setSendBackAllComment] = useState("");
+  const [sendBackAllSaving, setSendBackAllSaving] = useState(false);
+
   // Override form (per-control verdict override).
+  const [vendorScope, setVendorScope] = useState<{ assets: any[]; applications: any[]; services: any[] } | null>(null);
+
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [ovVerdict, setOvVerdict] = useState<Verdict>("Compliant");
   const [ovRisk, setOvRisk] = useState<Risk>("None");
@@ -71,9 +92,11 @@ export default function Console() {
         const me = await meRes.json();
         const role = me.session?.role;
         if (role !== "assessor" && role !== "root") { router.push("/login"); return; }
+        if (role === "root") { router.replace("/admin"); return; }
         const r = await fetch("/api/vendors");
         if (!r.ok) throw new Error(await errorMessage(r, "Could not load the vendor list."));
         if (!cancelled) { setVendors((await r.json()).vendors); setLoaded(true); }
+        try { const a = await fetch("/api/audit"); if (a.ok && !cancelled) setAuditEntries((await a.json()).entries ?? []); } catch {}
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : "Could not load the console.");
       }
@@ -90,6 +113,7 @@ export default function Console() {
         if (cancelled) return;
         setSubmission(r.ok ? await r.json() : null);
         setResults({});
+        try { const sc = await fetch(`/api/scope?vendorId=${encodeURIComponent(vendorId)}`); if (sc.ok && !cancelled) setVendorScope((await sc.json()).scope); } catch {}
       } catch {
         if (!cancelled) { setSubmission(null); setResults({}); }
       }
@@ -202,22 +226,147 @@ export default function Console() {
     }
   }
 
-  // Return the current finding to the vendor for remediation.
-  async function sendBack() {
+  // Open the send-back modal with an AI-generated comment pre-filled.
+  function sendBack() {
     const r = results[selected];
     if (!r) return;
+    const recs = r.recommendations.slice(0, 4).map((rec) => `  • ${rec}`).join("\n");
+    const comment = [
+      `Control ${selected} — ${control?.question ?? selected}`,
+      "",
+      `Verdict: Non-Compliant${r.risk && r.risk !== "None" ? ` | Risk: ${r.risk}` : ""}`,
+      "",
+      r.riskStatement && r.riskStatement !== "—" ? r.riskStatement : null,
+      recs ? `Required actions:\n${recs}` : null,
+      "",
+      "Please address the above issues, attach updated evidence, and resubmit this control.",
+    ]
+      .filter((l) => l !== null)
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    setSendBackComment(comment);
+    setSendBackOpen(true);
+  }
+
+  // Confirm and submit the send-back after assessor validates/edits the comment.
+  async function confirmSendBack() {
+    const r = results[selected];
+    if (!r) return;
+    setSendBackSaving(true);
     try {
       const res = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vendorId, controlId: selected, verdict: r.verdict, risk: r.risk, riskStatement: r.riskStatement, recommendations: r.recommendations }),
+        body: JSON.stringify({
+          vendorId,
+          controlId: selected,
+          verdict: r.verdict,
+          risk: r.risk,
+          riskStatement: r.riskStatement,
+          recommendations: r.recommendations,
+          note: sendBackComment.trim(),
+        }),
       });
       if (!res.ok) throw new Error(await errorMessage(res, "Could not send this finding back."));
       const s = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
       if (s.ok) setSubmission(await s.json());
+      setSendBackOpen(false);
       toast.success("Finding returned to vendor for remediation.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not send this finding back.");
+    } finally {
+      setSendBackSaving(false);
+    }
+  }
+
+  // Bulk send-back: collect all Non-Compliant controls and send one remediation note.
+  function openSendBackAll() {
+    const ncControls = controls.filter((c) => results[c.id]?.verdict === "Non-Compliant");
+    if (ncControls.length === 0) { toast.error("No Non-Compliant controls to send back yet."); return; }
+    const lines = ncControls.map((c) => {
+      const r = results[c.id];
+      const recs = (r.recommendations ?? []).slice(0, 2).map((rec) => `    • ${rec}`).join("\n");
+      return [`${c.id} — ${c.question}`, `  Verdict: Non-Compliant${r.risk && r.risk !== "None" ? ` | Risk: ${r.risk}` : ""}`, recs].filter(Boolean).join("\n");
+    });
+    const comment = [
+      `${ncControls.length} Non-Compliant requirement${ncControls.length > 1 ? "s" : ""} requiring remediation:`,
+      "",
+      lines.join("\n\n"),
+      "",
+      "Please address the above issues, attach updated evidence, and resubmit.",
+    ].join("\n").trim();
+    setSendBackAllComment(comment);
+    setSendBackAllOpen(true);
+  }
+
+  async function confirmSendBackAll() {
+    const ncControls = controls.filter((c) => results[c.id]?.verdict === "Non-Compliant");
+    if (ncControls.length === 0) return;
+    setSendBackAllSaving(true);
+    let failures = 0;
+    for (const c of ncControls) {
+      const r = results[c.id];
+      try {
+        const res = await fetch("/api/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            vendorId,
+            controlId: c.id,
+            verdict: r.verdict,
+            risk: r.risk,
+            riskStatement: r.riskStatement,
+            recommendations: r.recommendations,
+            note: sendBackAllComment.trim(),
+          }),
+        });
+        if (!res.ok) failures++;
+      } catch { failures++; }
+    }
+    const s = await fetch(`/api/submission?vendorId=${encodeURIComponent(vendorId)}`);
+    if (s.ok) setSubmission(await s.json());
+    setSendBackAllOpen(false);
+    setSendBackAllSaving(false);
+    if (failures === 0) toast.success(`${ncControls.length} controls returned to vendor for remediation.`);
+    else toast.error(`${failures} of ${ncControls.length} send-backs failed.`);
+  }
+
+  // Export per-vendor compliance report as Excel.
+  function exportVendorReport() {
+    try {
+      const wb = XLSX.utils.book_new();
+      const summaryData = [{
+        Vendor: selectedVendorName,
+        "Assessment Date": new Date().toLocaleDateString("en-GB"),
+        "Assessed Controls": summary.assessed,
+        Compliant: summary.compliant,
+        "Non-Compliant": summary.nc,
+        "Not Applicable": summary.na,
+        "Posture Score (%)": summary.posture,
+        "Consolidated Rating": consolidatedRating(Object.values(results).filter((r) => r.verdict === "Non-Compliant").map((r) => r.risk)).rating,
+      }];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), "Summary");
+      const reqData = controls.map((c) => {
+        const r = results[c.id];
+        const ans = submission?.answers?.[c.id];
+        return {
+          "Control ID": c.id,
+          Family: c.family,
+          Requirement: c.question,
+          "Vendor Response": ans?.response || (ans?.applicable === false ? "Not Applicable" : ""),
+          Verdict: r?.verdict ?? "Not assessed",
+          Risk: r?.risk ?? "",
+          "Risk Statement": r?.riskStatement ?? "",
+          Recommendations: (r?.recommendations ?? []).join("; "),
+        };
+      });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(reqData), "Requirements");
+      const slug = selectedVendorName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30);
+      XLSX.writeFile(wb, `tprm-report-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success(`${selectedVendorName} report exported.`);
+    } catch {
+      toast.error("Export failed.");
     }
   }
 
@@ -348,17 +497,70 @@ export default function Console() {
               ))}
             </select>
             <button
+              onClick={exportVendorReport}
+              disabled={summary.assessed === 0}
+              title="Export compliance report as Excel"
+              className="inline-flex items-center gap-2 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted transition hover:text-fg disabled:opacity-40"
+            >
+              <Download size={16} /> Export report
+            </button>
+            <button
               onClick={runAll}
               disabled={runningAll}
               className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
             >
               <PlayCircle size={16} />
-              {runningAll ? `Adjudicating… ${runProgress.done} / ${runProgress.total}` : "Run AI on all controls"}
+              {runningAll ? `Reviewing… ${runProgress.done} / ${runProgress.total}` : "Review all controls"}
             </button>
           </div>
         </header>
 
         <div className="mx-auto max-w-7xl px-5 pt-5">
+
+        {/* Tab bar: Controls | Audit log */}
+        <div className="mb-5 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+          <button onClick={() => setConsoleTab("controls")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "controls" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><Sparkles size={15} /> Controls</button>
+          <button onClick={() => setConsoleTab("audit")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "audit" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><ScrollText size={15} /> Audit log</button>
+        </div>
+
+        {/* Audit log tab */}
+        {consoleTab === "audit" && (
+          <section className="glass overflow-hidden rounded-2xl mb-6">
+            <div className="px-5 py-3 border-b border-border">
+              <h3 className="text-sm font-semibold">Activity log</h3>
+              <p className="text-xs text-muted">Overrides, send-backs, adjudications, and logins for this platform.</p>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 border-b border-border bg-surface/90 text-left text-[10px] uppercase tracking-wider text-muted backdrop-blur">
+                  <tr><th className="px-4 py-2">When</th><th className="px-4 py-2">Actor</th><th className="px-4 py-2">Action</th><th className="px-4 py-2">Target</th></tr>
+                </thead>
+                <tbody>
+                  {auditEntries.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-muted">No activity recorded yet.</td></tr>}
+                  {auditEntries.map((e: any, i: number) => {
+                    const act: string = e.action ?? "";
+                    const tone =
+                      act.includes("remediation") ? "text-warn" :
+                      act.includes("override") ? "text-mas" :
+                      act.includes("adjudicated") || act.includes("review") ? "text-brand" :
+                      act.includes("login") || act.includes("logout") ? "text-muted" :
+                      act.includes("submitted") ? "text-ok" : "text-fg";
+                    return (
+                      <tr key={i} className="border-b border-border/50">
+                        <td className="px-4 py-2 text-[11px] text-muted">{new Date(e.ts).toLocaleString()}</td>
+                        <td className="px-4 py-2 font-mono text-xs">{e.actor}</td>
+                        <td className={cn("px-4 py-2 text-xs font-medium", tone)}>{act}</td>
+                        <td className="px-4 py-2 text-xs text-muted">{e.target || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {consoleTab === "controls" && (<>
 
       {/* Vendor + summary */}
       <section className="mb-6 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -378,6 +580,22 @@ export default function Console() {
                 )}
               </div>
               <div className="mt-0.5 text-sm text-muted">{submission?.status === "submitted" ? "Submitted for review" : "Assessment in progress"}</div>
+              {vendorScope && (vendorScope.assets.length + vendorScope.applications.length + vendorScope.services.length) > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {vendorScope.assets.slice(0, 2).map((a: any, i: number) => (
+                    <span key={i} className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-muted" title={a.description}>{a.name} ({a.type})</span>
+                  ))}
+                  {vendorScope.applications.slice(0, 2).map((a: any, i: number) => (
+                    <span key={i} className="rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 text-[10px] text-brand" title={a.description}>{a.name}</span>
+                  ))}
+                  {vendorScope.services.slice(0, 1).map((s: any, i: number) => (
+                    <span key={i} className="rounded-full border border-ok/30 bg-ok/5 px-2 py-0.5 text-[10px] text-ok" title={s.description}>{s.name}</span>
+                  ))}
+                  {(vendorScope.assets.length + vendorScope.applications.length + vendorScope.services.length) > 5 && (
+                    <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-muted">+more</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -387,10 +605,18 @@ export default function Console() {
             <Stat value={summary.na} label="N/A" />
           </div>
           {summary.assessed > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-3 text-sm">
+            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border pt-3 text-sm">
               <span className="text-xs text-muted">Consolidated rating:</span>
               <span className={cn("font-bold", RATING_TONE[consolidated.rating])}>{consolidated.rating}</span>
               <span className="text-xs text-muted">· Approval authority: <span className="text-fg">{consolidated.approval}</span></span>
+              {summary.nc > 0 && (
+                <button
+                  onClick={openSendBackAll}
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-warn/50 bg-warn/10 px-3 py-1.5 text-xs font-semibold text-warn hover:brightness-110"
+                >
+                  ↩ Send back all Non-Compliant ({summary.nc})
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -450,6 +676,27 @@ export default function Console() {
         </div>
       )}
 
+      {/* Portfolio distribution bar — shows only once controls have been adjudicated */}
+      {summary.assessed > 0 && (
+        <div className="mb-5 glass rounded-2xl px-5 py-4">
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="font-semibold text-fg">Assessment distribution</span>
+            <span className="text-muted">{summary.assessed} of {controls.length} assessed</span>
+          </div>
+          <div className="flex h-2 overflow-hidden rounded-full bg-surface-2">
+            <motion.div className="h-full bg-ok" animate={{ width: `${(summary.compliant / controls.length) * 100}%` }} transition={{ duration: 0.8 }} />
+            <motion.div className="h-full bg-danger" animate={{ width: `${(summary.nc / controls.length) * 100}%` }} transition={{ duration: 0.8, delay: 0.1 }} />
+            <motion.div className="h-full bg-muted/40" animate={{ width: `${(summary.na / controls.length) * 100}%` }} transition={{ duration: 0.8, delay: 0.2 }} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-4 text-[11px] text-muted">
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-ok" />{summary.compliant} Compliant</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-danger" />{summary.nc} Non-Compliant</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-muted/40" />{summary.na} N/A</span>
+            <span className="flex items-center gap-1.5 ml-auto text-muted">{controls.length - summary.assessed} not yet assessed</span>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-5 md:grid-cols-[260px_1fr] lg:grid-cols-[300px_1fr]">
         {/* Control list — caps height & scrolls on every breakpoint so the detail pane stays reachable */}
         <aside className="max-h-[40vh] space-y-3 overflow-y-auto pr-1 md:max-h-[calc(100vh-7rem)]">
@@ -475,17 +722,27 @@ export default function Console() {
                         isSel ? "border-brand/50 bg-brand/10 shadow-glow-sm" : "border-border bg-surface/40 hover:bg-surface-2"
                       )}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-1">
                         <span className="font-mono text-[10px] text-muted">{c.id}</span>
-                        {r ? (
-                          r.verdict === "Compliant" ? <CheckCircle2 size={13} className="text-ok" /> :
-                          r.verdict === "Non-Compliant" ? <XCircle size={13} className="text-danger" /> :
-                          <CircleDashed size={13} className="text-muted" />
-                        ) : scanning[c.id] ? (
-                          <Sparkles size={13} className="animate-pulse text-brand" />
-                        ) : (
-                          <span className="text-[9px] uppercase tracking-wide text-muted">{c.demo ? "ready" : "—"}</span>
-                        )}
+                        <div className="flex shrink-0 flex-col items-end gap-0.5">
+                          {r ? (
+                            r.verdict === "Compliant" ? <CheckCircle2 size={13} className="text-ok" /> :
+                            r.verdict === "Non-Compliant" ? <XCircle size={13} className="text-danger" /> :
+                            <CircleDashed size={13} className="text-muted" />
+                          ) : scanning[c.id] ? (
+                            <Sparkles size={13} className="animate-pulse text-brand" />
+                          ) : (
+                            <span className="text-[9px] uppercase tracking-wide text-muted">{c.demo ? "ready" : "—"}</span>
+                          )}
+                          {r && r.risk && r.risk !== "None" && (
+                            <span className={cn("text-[8px] font-bold leading-none",
+                              r.risk.includes("High") ? "text-danger" :
+                              r.risk.includes("Medium") ? "text-warn" : "text-ok"
+                            )}>
+                              {r.risk.replace(" Risk", "")}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="mt-1 line-clamp-2 text-xs font-medium">{c.question}</div>
                       {priorNC && (
@@ -781,10 +1038,127 @@ export default function Console() {
 
         </section>
       </div>
-        </div>
+        </>)} {/* end consoleTab === "controls" */}
+        </div> {/* end mx-auto max-w-7xl */}
 
         {/* Evidence viewer — real modal dialog */}
         <EvidenceDialog view={evidenceView} onClose={() => setEvidenceView(null)} />
+
+        {/* Send-back-for-remediation modal */}
+        <AnimatePresence>
+          {sendBackOpen && (
+            <motion.div
+              className="fixed inset-0 z-50 grid place-items-center p-4"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+            >
+              <div
+                className="absolute inset-0 bg-bg/70 backdrop-blur-sm"
+                onClick={() => setSendBackOpen(false)}
+                aria-hidden="true"
+              />
+              <motion.div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="sendback-title"
+                initial={{ opacity: 0, scale: 0.97, y: 8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.97 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                className="glass relative z-10 w-full max-w-xl rounded-2xl p-5 shadow-glow"
+              >
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 id="sendback-title" className="text-sm font-semibold">↩ Return for Remediation</h3>
+                  <button
+                    onClick={() => setSendBackOpen(false)}
+                    aria-label="Close"
+                    className="grid h-7 w-7 place-items-center rounded-lg border border-border text-muted hover:text-fg"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <p className="mb-3 text-xs text-muted">
+                  The comment below was generated from the AI finding. Review it, edit if needed, then confirm to send it to the vendor.
+                </p>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    Comment to vendor <span className="text-danger">*</span>
+                  </span>
+                  <textarea
+                    value={sendBackComment}
+                    onChange={(e) => setSendBackComment(e.target.value)}
+                    rows={9}
+                    className="w-full rounded-xl border border-border bg-surface/60 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-warn"
+                  />
+                </label>
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    onClick={confirmSendBack}
+                    disabled={sendBackSaving || !sendBackComment.trim()}
+                    className="inline-flex items-center gap-2 rounded-xl border border-warn/60 bg-warn/15 px-4 py-2 text-sm font-semibold text-warn transition hover:brightness-110 disabled:opacity-60"
+                  >
+                    {sendBackSaving ? <Loader2 size={15} className="animate-spin" /> : <span>↩</span>}
+                    {sendBackSaving ? "Sending…" : "Confirm & Send"}
+                  </button>
+                  <button
+                    onClick={() => setSendBackOpen(false)}
+                    className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-muted hover:text-fg"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Bulk send-back-for-remediation modal */}
+        <AnimatePresence>
+          {sendBackAllOpen && (
+            <motion.div
+              className="fixed inset-0 z-50 grid place-items-center p-4"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}
+            >
+              <div className="absolute inset-0 bg-bg/70 backdrop-blur-sm" onClick={() => setSendBackAllOpen(false)} aria-hidden="true" />
+              <motion.div
+                role="dialog" aria-modal="true" aria-labelledby="sendback-all-title"
+                initial={{ opacity: 0, scale: 0.97, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                className="glass relative z-10 w-full max-w-xl rounded-2xl p-5 shadow-glow"
+              >
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 id="sendback-all-title" className="text-sm font-semibold">↩ Return All Non-Compliant for Remediation</h3>
+                  <button onClick={() => setSendBackAllOpen(false)} aria-label="Close" className="grid h-7 w-7 place-items-center rounded-lg border border-border text-muted hover:text-fg"><X size={14} /></button>
+                </div>
+                <p className="mb-3 text-xs text-muted">
+                  This will send the note below to the vendor for every Non-Compliant control in the current assessment. Review and edit before confirming.
+                </p>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">Comment to vendor <span className="text-danger">*</span></span>
+                  <textarea
+                    value={sendBackAllComment}
+                    onChange={(e) => setSendBackAllComment(e.target.value)}
+                    rows={10}
+                    className="w-full rounded-xl border border-border bg-surface/60 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-warn"
+                  />
+                </label>
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    onClick={confirmSendBackAll}
+                    disabled={sendBackAllSaving || !sendBackAllComment.trim()}
+                    className="inline-flex items-center gap-2 rounded-xl border border-warn/60 bg-warn/15 px-4 py-2 text-sm font-semibold text-warn transition hover:brightness-110 disabled:opacity-60"
+                  >
+                    {sendBackAllSaving ? <Loader2 size={15} className="animate-spin" /> : <span>↩</span>}
+                    {sendBackAllSaving ? "Sending…" : "Confirm & Send All"}
+                  </button>
+                  <button onClick={() => setSendBackAllOpen(false)} className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-muted hover:text-fg">Cancel</button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
       </main>

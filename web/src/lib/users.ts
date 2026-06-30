@@ -32,6 +32,12 @@ export interface VendorProfile {
   agreementFile?: UploadRef; // existing vendors: contract/MSA
   lastAuditFile?: UploadRef; // existing vendors: last TPRM audit report
   onboardedBy?: string; // assessor username who created the vendor
+  // ---- Scope definition (Phase B) ----
+  assessmentScope?: {
+    assets: { name: string; type: string; description: string }[];
+    applications: { name: string; url: string; description: string }[];
+    services: { name: string; description: string }[];
+  };
 }
 export interface StoredUser {
   username: string; // login id (email)
@@ -130,14 +136,18 @@ export function createVendor(input: { email: string; password: string; profile: 
   });
 }
 
+// One row PER VENDOR (deduped by vendorId). A vendor can have several login
+// accounts/SPOCs — keep the earliest-created as the canonical record so the
+// vendor appears once in every listing (portfolio, customer view, picker).
 export function listVendors() {
-  return Object.values(readAll()).map((u) => ({
-    username: u.username,
-    name: u.name,
-    vendorId: u.vendorId,
-    profile: u.profile,
-    createdAt: u.createdAt,
-  }));
+  const byVendor = new Map<string, { username: string; name: string; vendorId: string; profile: VendorProfile; createdAt: string }>();
+  for (const u of Object.values(readAll())) {
+    const existing = byVendor.get(u.vendorId);
+    if (!existing || u.createdAt < existing.createdAt) {
+      byVendor.set(u.vendorId, { username: u.username, name: u.name, vendorId: u.vendorId, profile: u.profile, createdAt: u.createdAt });
+    }
+  }
+  return Array.from(byVendor.values());
 }
 export function getVendorProfile(vendorId: string): VendorProfile | null {
   return Object.values(readAll()).find((u) => u.vendorId === vendorId)?.profile ?? null;
@@ -168,6 +178,34 @@ export function setVendorTier(vendorId: string, tier: string): Promise<boolean> 
     all[entry.username] = entry;
     writeAll(all);
     return true;
+  });
+}
+
+// Add an additional login account for an existing vendor (shared submission workspace).
+export function addUserToVendor(input: { vendorId: string; email: string; password: string; name?: string }): Promise<Session> {
+  return withLock("users", () => {
+    const all = readAll();
+    const existing = Object.values(all).find((u) => u.vendorId === input.vendorId);
+    if (!existing) throw new Error("vendor_not_found");
+    const username = (input.email || "").toLowerCase().trim();
+    if (!username || !isValidEmail(username)) throw new Error("invalid_email");
+    const pwErr = passwordPolicy(input.password);
+    if (pwErr) throw new Error(pwErr);
+    if (all[username]) throw new Error("exists");
+    const salt = crypto.randomBytes(16).toString("hex");
+    const user: StoredUser = {
+      username,
+      name: (input.name || "").trim() || existing.name,
+      vendorId: input.vendorId,
+      salt,
+      hash: hashPw(input.password, salt),
+      status: "active",
+      profile: existing.profile,
+      createdAt: new Date().toISOString(),
+    };
+    all[username] = user;
+    writeAll(all);
+    return { username, role: "vendor" as const, vendorId: input.vendorId, name: user.name };
   });
 }
 

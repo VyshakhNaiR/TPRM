@@ -7,6 +7,28 @@ import { LogIn } from "lucide-react";
 import { AnimatedLogo } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 
+function FloatingOrbs() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+      <motion.div
+        className="absolute -left-40 -top-40 h-[28rem] w-[28rem] rounded-full bg-brand/10 blur-3xl"
+        animate={{ x: [0, 40, 0], y: [0, -28, 0] }}
+        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        className="absolute -bottom-40 -right-40 h-[28rem] w-[28rem] rounded-full bg-mas/10 blur-3xl"
+        animate={{ x: [0, -36, 0], y: [0, 24, 0] }}
+        transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        className="absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ok/5 blur-3xl"
+        animate={{ scale: [1, 1.25, 1] }}
+        transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+      />
+    </div>
+  );
+}
+
 export default function Login() {
   const router = useRouter();
   const [username, setUsername] = useState("");
@@ -37,7 +59,7 @@ export default function Login() {
       }
       const { session } = await res.json();
       const landing: Record<string, string> = { root: "/admin", customer: "/customer", assessor: "/console", vendor: "/vendor" };
-      router.push(landing[session.role] ?? "/console");
+      router.replace(landing[session.role] ?? "/console");
     } catch {
       setError("Network error — could not reach the server. Please try again.");
     } finally {
@@ -51,7 +73,8 @@ export default function Login() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-6">
+    <main className="relative grid min-h-screen place-items-center px-6">
+      <FloatingOrbs />
       <div className="absolute right-5 top-5"><ThemeToggle /></div>
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -59,8 +82,16 @@ export default function Login() {
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
         className="glass w-full max-w-sm rounded-3xl p-8"
       >
-        <div className="mb-6 grid place-items-center">
+        <div className="mb-6 grid place-items-center gap-2">
           <AnimatedLogo width={150} />
+          <motion.p
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+            className="text-center text-xs text-muted"
+          >
+            AI-powered third-party risk, built for financial regulators
+          </motion.p>
         </div>
         <form onSubmit={submit} className="space-y-3">
           <div>
