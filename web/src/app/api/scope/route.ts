@@ -51,7 +51,9 @@ export async function GET(req: NextRequest) {
   }
 
   const profile = getVendorProfile(vendorId);
-  if (!profile) return NextResponse.json({ error: "vendor not found" }, { status: 404 });
+  // Seeded demo vendors (e.g. apex) have no stored profile — return an empty
+  // scope so the UI loads cleanly instead of erroring.
+  if (!profile) return NextResponse.json({ scope: emptyScope(["None"]), requests: [] });
 
   // Merge over an empty template so legacy/partial scopes always expose the full
   // shape (arrays present, frameworks defaulting to the vendor's regulators).

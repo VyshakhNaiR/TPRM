@@ -39,6 +39,10 @@ const nextConfig = {
   // Standalone output => portable Docker image, runs on any host (not Vercel-locked).
   output: "standalone",
   reactStrictMode: true,
+  // Allow the dev server's HMR/dev resources to be fetched when the app is opened
+  // over the LAN IP (otherwise Next blocks them and the client never hydrates).
+  // Dev-only; ignored in production builds.
+  allowedDevOrigins: ["192.168.1.42"],
   // Heavy node-only extractors run in API routes; don't bundle them.
   serverExternalPackages: ["pdf-parse", "mammoth", "tesseract.js"],
   async headers() {
