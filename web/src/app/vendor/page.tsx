@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle, ShieldCheck, Trash2, MessageCircle, X, Lock } from "lucide-react";
+import { Paperclip, FileText, CheckCircle2, UploadCloud, Send, LogOut, Loader2, ChevronDown, AlertTriangle, ShieldCheck, Trash2, MessageCircle, X, Lock, Save } from "lucide-react";
 import { CONTROLS } from "@/data/seed";
 import { BASELINE_CONTROLS } from "@/data/baseline";
 import type { CertType, CoverageMode, Submission, VendorCert } from "@/lib/store";
@@ -41,6 +41,7 @@ function CompletionRing({ pct }: { pct: number }) {
 import { cn } from "@/lib/utils";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+type AutosavePatch = { response?: string; justification?: string; certMappingNote?: string; coverage?: CoverageMode; applicable?: boolean };
 
 type Answer = Submission["answers"][string];
 
@@ -117,6 +118,10 @@ export default function VendorPortal() {
   const certFileRef = useRef<HTMLInputElement | null>(null);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Latest un-flushed patch per control, so an explicit "Save draft" can persist
+  // anything still sitting in the debounce window immediately.
+  const pendingPatches = useRef<Record<string, AutosavePatch>>({});
+  const [savingDraft, setSavingDraft] = useState(false);
   const scrollRestoreRef = useRef<number | null>(null);
   const toast = useToasts();
 
@@ -305,14 +310,13 @@ export default function VendorPortal() {
 
   // Debounced autosave for free-text fields (response & N/A justification) ~1.5s after typing stops.
   const queueAutosave = useCallback(
-    (
-      controlId: string,
-      patch: { response?: string; justification?: string; certMappingNote?: string; coverage?: CoverageMode; applicable?: boolean }
-    ) => {
+    (controlId: string, patch: AutosavePatch) => {
       setSaveState("dirty");
+      pendingPatches.current[controlId] = patch;
       if (debounceTimers.current[controlId]) clearTimeout(debounceTimers.current[controlId]);
       debounceTimers.current[controlId] = setTimeout(() => {
         delete debounceTimers.current[controlId];
+        delete pendingPatches.current[controlId];
         save(controlId, patch);
       }, 1500);
     },
@@ -321,9 +325,28 @@ export default function VendorPortal() {
 
   // Cancel a pending autosave (e.g. when blur-save fires first).
   function cancelAutosave(controlId: string) {
+    delete pendingPatches.current[controlId];
     if (debounceTimers.current[controlId]) {
       clearTimeout(debounceTimers.current[controlId]);
       delete debounceTimers.current[controlId];
+    }
+  }
+
+  // Explicit "Save draft" — flush anything still in the debounce window right now,
+  // so the vendor gets immediate confirmation their progress is persisted.
+  async function saveDraftNow() {
+    const ids = Object.keys(pendingPatches.current);
+    setSavingDraft(true);
+    try {
+      for (const id of ids) {
+        if (debounceTimers.current[id]) { clearTimeout(debounceTimers.current[id]); delete debounceTimers.current[id]; }
+        const patch = pendingPatches.current[id];
+        delete pendingPatches.current[id];
+        await save(id, patch);
+      }
+      toast.success("Draft saved — you can close this and resume anytime.");
+    } finally {
+      setSavingDraft(false);
     }
   }
 
@@ -528,17 +551,36 @@ export default function VendorPortal() {
               <p className="text-sm text-muted">{answered} of {controls.length} complete · {submitted ? "submitted for review" : "draft"}{needsAttention > 0 && <span className="font-semibold text-danger"> · {needsAttention} returned for remediation</span>}</p>
               <SaveIndicator state={saveState} savedAt={savedAt} />
             </div>
-            <button
-              onClick={submitAll}
-              disabled={submitting || submitted || !allComplete}
-              title={!submitted && !allComplete ? "Complete all requirements to submit" : undefined}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {submitted ? <CheckCircle2 size={16} /> : <Send size={16} />}
-              {submitted ? "Submitted" : submitting ? "Submitting…" : "Submit for review"}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {!submitted && (
+                <button
+                  onClick={saveDraftNow}
+                  disabled={savingDraft || saveState === "saving"}
+                  title="Persist your current progress now"
+                  className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-fg transition hover:border-brand/50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingDraft ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  {savingDraft ? "Saving…" : "Save draft"}
+                </button>
+              )}
+              <button
+                onClick={submitAll}
+                disabled={submitting || submitted || !allComplete}
+                title={!submitted && !allComplete ? "Complete all requirements to submit" : undefined}
+                className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {submitted ? <CheckCircle2 size={16} /> : <Send size={16} />}
+                {submitted ? "Submitted" : submitting ? "Submitting…" : "Submit for review"}
+              </button>
+            </div>
           </div>
         </div>
+        {!submitted && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-border bg-surface-2/40 px-3 py-2 text-xs text-muted">
+            <Save size={13} className="mt-0.5 shrink-0 text-brand" />
+            <span>Your answers save automatically as you go. You can close this page and resume anytime — nothing is sent to the assessor until you click <span className="font-semibold text-fg">Submit for review</span>.</span>
+          </div>
+        )}
         <div className="mt-3 flex items-center justify-between">
           <span className="text-xs font-medium text-muted">{answered} / {controls.length} complete</span>
           <button

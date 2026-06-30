@@ -48,6 +48,15 @@ export interface StoredUser {
   status: "active";
   profile: VendorProfile;
   createdAt: string;
+  contactRole?: string; // optional tag: "Primary SPOC", "Security", "Compliance", etc.
+}
+
+export interface VendorContact {
+  username: string;
+  name: string;
+  contactRole?: string;
+  createdAt: string;
+  primary: boolean; // earliest-created account is the primary login
 }
 
 function readAll(): Record<string, StoredUser> {
@@ -153,6 +162,21 @@ export function getVendorProfile(vendorId: string): VendorProfile | null {
   return Object.values(readAll()).find((u) => u.vendorId === vendorId)?.profile ?? null;
 }
 
+// All login accounts (SPOCs/contacts) for a vendor, oldest first. The earliest
+// account is flagged as the primary login.
+export function listVendorContacts(vendorId: string): VendorContact[] {
+  const rows = Object.values(readAll())
+    .filter((u) => u.vendorId === vendorId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return rows.map((u, i) => ({
+    username: u.username,
+    name: u.name,
+    contactRole: u.contactRole,
+    createdAt: u.createdAt,
+    primary: i === 0,
+  }));
+}
+
 // Merge fields into a vendor's profile (assessor onboarding: file refs, infra, etc.).
 export function updateVendorProfile(vendorId: string, patch: Partial<VendorProfile>): Promise<boolean> {
   return withLock("users", () => {
@@ -182,7 +206,7 @@ export function setVendorTier(vendorId: string, tier: string): Promise<boolean> 
 }
 
 // Add an additional login account for an existing vendor (shared submission workspace).
-export function addUserToVendor(input: { vendorId: string; email: string; password: string; name?: string }): Promise<Session> {
+export function addUserToVendor(input: { vendorId: string; email: string; password: string; name?: string; contactRole?: string }): Promise<Session> {
   return withLock("users", () => {
     const all = readAll();
     const existing = Object.values(all).find((u) => u.vendorId === input.vendorId);
@@ -202,6 +226,7 @@ export function addUserToVendor(input: { vendorId: string; email: string; passwo
       status: "active",
       profile: existing.profile,
       createdAt: new Date().toISOString(),
+      contactRole: (input.contactRole || "").trim() || undefined,
     };
     all[username] = user;
     writeAll(all);

@@ -22,6 +22,9 @@ import {
   X,
   Download,
   ScrollText,
+  Users,
+  UserPlus,
+  Star,
 } from "lucide-react";
 import { CONTROLS, FRAMEWORKS, VENDOR } from "@/data/seed";
 import { BASELINE_CONTROLS } from "@/data/baseline";
@@ -31,6 +34,7 @@ import { TracerGraph } from "@/components/tracer-graph";
 import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat, Toaster, ErrorState, errorMessage, useToasts } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { consolidatedRating } from "@/lib/risk";
+import type { VendorContact } from "@/lib/users";
 
 export default function Console() {
   const router = useRouter();
@@ -61,7 +65,12 @@ export default function Console() {
 
   // Audit log for assessors.
   const [auditEntries, setAuditEntries] = useState<any[]>([]);
-  const [consoleTab, setConsoleTab] = useState<"controls" | "audit">("controls");
+  const [consoleTab, setConsoleTab] = useState<"controls" | "contacts" | "audit">("controls");
+
+  // Vendor contacts / SPOCs (assessor can add additional login accounts).
+  const [contacts, setContacts] = useState<VendorContact[]>([]);
+  const [contactForm, setContactForm] = useState({ email: "", password: "", name: "", contactRole: "" });
+  const [contactSaving, setContactSaving] = useState(false);
 
   // Send-back-for-remediation modal (single control).
   const [sendBackOpen, setSendBackOpen] = useState(false);
@@ -332,6 +341,42 @@ export default function Console() {
     else toast.error(`${failures} of ${ncControls.length} send-backs failed.`);
   }
 
+  // Vendor contacts / SPOCs — load for the active vendor, refresh on switch.
+  const loadContacts = useCallback(async (vid: string) => {
+    try {
+      const r = await fetch(`/api/vendor-user?vendorId=${encodeURIComponent(vid)}`);
+      if (r.ok) setContacts((await r.json()).contacts ?? []);
+      else setContacts([]);
+    } catch { setContacts([]); }
+  }, []);
+  useEffect(() => { if (vendorId) loadContacts(vendorId); }, [vendorId, loadContacts]);
+
+  async function addContact() {
+    if (!contactForm.email.trim() || !contactForm.password) { toast.error("Email and password are required."); return; }
+    setContactSaving(true);
+    try {
+      const res = await fetch("/api/vendor-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendorId,
+          email: contactForm.email.trim(),
+          password: contactForm.password,
+          name: contactForm.name.trim() || undefined,
+          contactRole: contactForm.contactRole.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not create the contact."));
+      toast.success("Contact account created.");
+      setContactForm({ email: "", password: "", name: "", contactRole: "" });
+      await loadContacts(vendorId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create the contact.");
+    } finally {
+      setContactSaving(false);
+    }
+  }
+
   // Export per-vendor compliance report as Excel.
   function exportVendorReport() {
     try {
@@ -520,8 +565,64 @@ export default function Console() {
         {/* Tab bar: Controls | Audit log */}
         <div className="mb-5 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
           <button onClick={() => setConsoleTab("controls")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "controls" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><Sparkles size={15} /> Controls</button>
+          <button onClick={() => setConsoleTab("contacts")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "contacts" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><Users size={15} /> Contacts{contacts.length > 0 && <span className="rounded-md bg-surface-2 px-1.5 text-[10px]">{contacts.length}</span>}</button>
           <button onClick={() => setConsoleTab("audit")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "audit" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><ScrollText size={15} /> Audit log</button>
         </div>
+
+        {/* Contacts / SPOCs tab */}
+        {consoleTab === "contacts" && (
+          <div className="mb-6 grid gap-5 lg:grid-cols-5">
+            <section className="glass overflow-hidden rounded-2xl lg:col-span-3">
+              <div className="border-b border-border px-5 py-3">
+                <h3 className="text-sm font-semibold">Contacts for {selectedVendorName}</h3>
+                <p className="text-xs text-muted">All login accounts (SPOCs) that share this vendor&apos;s workspace.</p>
+              </div>
+              <div className="divide-y divide-border/60">
+                {contacts.length === 0 && <div className="px-5 py-6 text-center text-sm text-muted">No contacts loaded.</div>}
+                {contacts.map((c) => (
+                  <div key={c.username} className="flex items-center gap-3 px-5 py-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand/15 text-xs font-bold text-brand">
+                      {(c.name || c.username)[0]?.toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium">{c.name || c.username}</span>
+                        {c.primary && <span className="inline-flex items-center gap-1 rounded-md bg-mas/10 px-1.5 py-0.5 text-[10px] font-semibold text-mas"><Star size={10} /> Primary</span>}
+                        {c.contactRole && <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">{c.contactRole}</span>}
+                      </div>
+                      <div className="truncate font-mono text-xs text-muted">{c.username}</div>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-muted">{new Date(c.createdAt).toLocaleDateString("en-GB")}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="glass overflow-hidden rounded-2xl lg:col-span-2">
+              <div className="border-b border-border px-5 py-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold"><UserPlus size={15} /> Add a contact</h3>
+                <p className="text-xs text-muted">Creates an additional login for this vendor.</p>
+              </div>
+              <div className="space-y-3 p-5">
+                <label className="block text-xs font-medium">Display name <span className="text-muted">(optional)</span>
+                  <input value={contactForm.name} onChange={(e) => setContactForm((f) => ({ ...f, name: e.target.value }))} placeholder="Jane Doe" className="mt-1 block w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </label>
+                <label className="block text-xs font-medium">Contact role <span className="text-muted">(optional)</span>
+                  <input value={contactForm.contactRole} onChange={(e) => setContactForm((f) => ({ ...f, contactRole: e.target.value }))} placeholder="Security / Compliance / Primary SPOC" className="mt-1 block w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </label>
+                <label className="block text-xs font-medium">Email <span className="text-danger">*</span>
+                  <input type="email" value={contactForm.email} onChange={(e) => setContactForm((f) => ({ ...f, email: e.target.value }))} placeholder="contact@vendor.com" className="mt-1 block w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </label>
+                <label className="block text-xs font-medium">Temporary password <span className="text-danger">*</span>
+                  <input type="password" value={contactForm.password} onChange={(e) => setContactForm((f) => ({ ...f, password: e.target.value }))} placeholder="Min. 6 characters" className="mt-1 block w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </label>
+                <button onClick={addContact} disabled={contactSaving} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60">
+                  {contactSaving ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}{contactSaving ? "Creating…" : "Create account"}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
 
         {/* Audit log tab */}
         {consoleTab === "audit" && (
