@@ -141,10 +141,20 @@ export default function Onboard() {
       fd.append("file", file);
       const res = await fetch("/api/scope/extract", { method: "POST", body: fd });
       if (!res.ok) throw new Error(await errorMessage(res, "Could not read that document."));
-      const { scope: ai, method } = await res.json();
-      // Apply to the risk-profile fields where the doc gave a value.
+      const { scope: ai, profile: pr, method } = await res.json();
+      // Apply company/contact details + the risk-profile fields the doc covered.
+      // Never auto-fill the login password. Only fill the login email if empty.
       setF((s) => ({
         ...s,
+        company: pr?.company || s.company,
+        website: pr?.website || s.website,
+        country: pr?.country || s.country,
+        address: pr?.address || s.address,
+        spocPhone: pr?.spocPhone || s.spocPhone,
+        serviceDescription: pr?.serviceDescription || s.serviceDescription,
+        email: s.email || pr?.spocEmail || "",
+        engagementType: pr?.engagementType || s.engagementType,
+        directContract: typeof pr?.directContract === "boolean" ? pr.directContract : s.directContract,
         dataSensitivity: ai.dataClassification ? (CLASS_TO_SENS[ai.dataClassification] ?? s.dataSensitivity) : s.dataSensitivity,
         access: ai.accessLevel ? (LEVEL_TO_ACCESS[ai.accessLevel] ?? s.access) : s.access,
         criticality: ai.businessCriticality || s.criticality,
@@ -168,7 +178,7 @@ export default function Onboard() {
         applications: ai.applications?.length ? ai.applications : s.applications,
         subcontractors: ai.subcontractors?.length ? ai.subcontractors : s.subcontractors,
       }));
-      toast.success(method === "ai" ? "Scope auto-filled from the document — review the fields below." : "Scope drafted from the document — please review.");
+      toast.success(method === "ai" ? "Form auto-filled from the document — review every field before submitting." : "Form drafted from the document (no AI configured) — please review.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not read that document.");
     } finally {
@@ -380,6 +390,31 @@ export default function Onboard() {
           </div>
 
           <form ref={formRef} onSubmit={submit} className="space-y-6">
+            {/* How to start — fill manually, OR upload a document and let AI pre-fill. */}
+            <div className="rounded-2xl border border-brand/30 bg-brand/5 p-4">
+              <input ref={scopeFileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) autofillScope(file); }} />
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand"><Sparkles size={18} /></div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-fg">Two ways to onboard</h2>
+                    <p className="text-xs text-muted">
+                      <span className="font-semibold text-fg">Fill the form manually</span> below — or upload an <span className="font-semibold text-fg">assessment-scope sheet or contract/MSA</span> and let AI pre-fill the whole form (company details, engagement, risk profile &amp; scope). You review and edit every field before submitting.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => scopeFileRef.current?.click()}
+                  disabled={scopeAutofilling}
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
+                >
+                  {scopeAutofilling ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  {scopeAutofilling ? "Reading document…" : "Upload document to auto-fill"}
+                </button>
+              </div>
+            </div>
+
             {/* Company details */}
             <Section title="Company details">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -574,22 +609,11 @@ export default function Onboard() {
               </div>
             </Section>
 
-            {/* Assessment scope — define here (assessor-owned). AI can pre-fill it
-                from a scope sheet or the contract; the assessor reviews/edits. */}
-            <Section
-              title="Assessment scope"
-              aside={
-                <>
-                  <input ref={scopeFileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) autofillScope(file); }} />
-                  <button type="button" onClick={() => scopeFileRef.current?.click()} disabled={scopeAutofilling} className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-semibold text-brand transition hover:bg-brand/10 disabled:opacity-60">
-                    {scopeAutofilling ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}{scopeAutofilling ? "Reading…" : "AI auto-fill"}
-                  </button>
-                </>
-              }
-            >
-              <p className="mb-3 flex items-start gap-2 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2 text-xs text-muted">
+            {/* Assessment scope — assessor-owned; defined here at onboarding. */}
+            <Section title="Assessment scope">
+              <p className="mb-3 flex items-start gap-2 rounded-xl border border-border bg-surface-2/40 px-3 py-2 text-xs text-muted">
                 <Target size={13} className="mt-0.5 shrink-0 text-brand" />
-                Define the scope here, or click <span className="font-semibold text-brand">AI auto-fill</span> to extract it from a scope sheet (Excel) or the contract/MSA. The risk-profile fields above also feed the scope. You can refine the detailed lists later in the console.
+                The risk-profile fields above also feed the scope. Use <span className="font-semibold text-fg">Upload document to auto-fill</span> at the top to populate these from a scope sheet or contract. Detailed lists can be refined later in the console.
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Assessment name">

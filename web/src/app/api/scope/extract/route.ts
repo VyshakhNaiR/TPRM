@@ -19,9 +19,18 @@ function sheetToText(buf: Buffer): string {
   return wb.SheetNames.map((n) => `# ${n}\n${XLSX.utils.sheet_to_csv(wb.Sheets[n])}`).join("\n\n").slice(0, MAX_TEXT);
 }
 
-const SCHEMA_PROMPT = `You extract a Third-Party Risk assessment SCOPE from a document and return STRICT JSON only.
-Return a single JSON object. Include ONLY keys you can confidently infer; omit the rest. Do not invent values.
-Keys:
+const SCHEMA_PROMPT = `You extract vendor-onboarding details from a document (an assessment-scope sheet
+or a contract / MSA) and return STRICT JSON only. Return a single JSON object with two keys:
+"profile" and "scope". Include ONLY fields you can confidently infer; omit the rest. Never invent values.
+
+"profile": {
+  company (string — vendor legal/trading name), website (string), country (string),
+  address (string), spocPhone (string), spocEmail (string — vendor contact email),
+  serviceDescription (string — what the vendor provides),
+  engagementType ("due_diligence" for a new vendor | "existing" for a re-assessment of a current vendor),
+  directContract (boolean — true if the bank contracts the vendor directly)
+}
+"scope": {
   name (string), type ("Onboarding"|"Annual"|"Re-assessment"|"Ad-hoc"),
   periodStart ("YYYY-MM-DD"), periodEnd ("YYYY-MM-DD"),
   services [{name, description}], applications [{name, url, description}],
@@ -35,7 +44,8 @@ Keys:
   connectivity ("none"|"api"|"vpn"|"dedicated"),
   crossBorderTransfer (boolean),
   frameworks (subset of ["RBI","MAS","SEBI","None"]),
-  outOfScope (string).
+  outOfScope (string)
+}
 Output ONLY the JSON object, no prose, no markdown fences.`;
 
 function parseJsonLoose(s: string): any {
@@ -50,7 +60,24 @@ function parseJsonLoose(s: string): any {
 // matches a known label onto scope fields. Coarse but useful when AI is off.
 function heuristic(text: string): any {
   const out: any = {};
+  const p: any = {};
   const want: Record<string, (v: string) => void> = {
+    "company": (v) => (p.company = v),
+    "company name": (v) => (p.company = v),
+    "vendor": (v) => (p.company = v),
+    "vendor name": (v) => (p.company = v),
+    "website": (v) => (p.website = v),
+    "country": (v) => (p.country = v),
+    "address": (v) => (p.address = v),
+    "phone": (v) => (p.spocPhone = v),
+    "spoc phone": (v) => (p.spocPhone = v),
+    "contact phone": (v) => (p.spocPhone = v),
+    "email": (v) => (p.spocEmail = v),
+    "spoc email": (v) => (p.spocEmail = v),
+    "contact email": (v) => (p.spocEmail = v),
+    "service description": (v) => (p.serviceDescription = v),
+    "services provided": (v) => (p.serviceDescription = v),
+    "engagement type": (v) => (p.engagementType = /exist|re-?assess/i.test(v) ? "existing" : "due_diligence"),
     "assessment name": (v) => (out.name = v),
     "assessment type": (v) => (out.type = v),
     "hosting": (v) => (out.hostingModel = /hybrid/i.test(v) ? "hybrid" : /cloud/i.test(v) ? "cloud" : /prem/i.test(v) ? "on_prem" : undefined),
@@ -78,6 +105,19 @@ function heuristic(text: string): any {
     const val = m[2].trim();
     if (want[key] && val) want[key](val);
   }
+  return { scope: out, profile: p };
+}
+
+// Coerce the AI/heuristic "profile" object into the onboarding fields we accept.
+function sanitizeProfile(raw: any): Record<string, unknown> {
+  if (!raw || typeof raw !== "object") return {};
+  const s = (v: unknown, n = 300) => (typeof v === "string" ? v.slice(0, n) : undefined);
+  const out: Record<string, unknown> = {};
+  for (const [k, n] of [["company", 200], ["website", 300], ["country", 100], ["address", 300], ["spocPhone", 60], ["spocEmail", 200], ["serviceDescription", 1000]] as const) {
+    const v = s(raw[k], n); if (v) out[k] = v;
+  }
+  if (raw.engagementType === "existing" || raw.engagementType === "due_diligence") out.engagementType = raw.engagementType;
+  if (typeof raw.directContract === "boolean") out.directContract = raw.directContract;
   return out;
 }
 
@@ -139,6 +179,8 @@ export async function POST(req: NextRequest) {
 
   const ai = await aiExtract(text);
   const raw = ai ?? heuristic(text);
-  const scope = sanitizeScope(raw);
-  return NextResponse.json({ scope, method: ai ? "ai" : "heuristic" });
+  // Accept both the nested {scope, profile} shape and a flat scope (back-compat).
+  const scope = sanitizeScope(raw?.scope ?? raw);
+  const profile = sanitizeProfile(raw?.profile);
+  return NextResponse.json({ scope, profile, method: ai ? "ai" : "heuristic" });
 }
