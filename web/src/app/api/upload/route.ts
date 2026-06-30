@@ -25,6 +25,10 @@ export async function POST(req: NextRequest) {
   }
   const file = form.get("file") as File | null;
   const controlId = form.get("controlId") as string | null;
+  // Optional: password for an encrypted document, or an explicit opt-out to
+  // attach the file even though it can't be read.
+  const password = (form.get("password") as string | null)?.slice(0, 256) || undefined;
+  const attachUnreadable = form.get("attachUnreadable") === "true";
   if (!file || !controlId) return NextResponse.json({ error: "file and controlId required" }, { status: 400 });
   // Only accept evidence against a real control (no arbitrary store keys).
   if (!findControl(controlId)) return NextResponse.json({ error: "unknown control" }, { status: 404 });
@@ -37,9 +41,23 @@ export async function POST(req: NextRequest) {
   const typeErr = validateUpload(file.name, bytes);
   if (typeErr) return NextResponse.json({ error: typeErr }, { status: 415 });
 
+  // Deterministically extract the file's text (shared by static + AI engines).
+  // Done BEFORE persisting so an encrypted file can be rejected without leaving
+  // an orphan upload — the vendor is prompted for the document password instead.
+  const extraction = await extractFile(file.name, bytes, { ocr: getSettings().static.ocrEnabled, password });
+  if (extraction.status === "encrypted" && !attachUnreadable) {
+    return NextResponse.json(
+      {
+        error: extraction.passwordError === "incorrect"
+          ? "That password didn't unlock the document. Please try again."
+          : "This document is password-protected. Enter its password so we can read it.",
+        code: extraction.passwordError === "incorrect" ? "wrong_password" : "needs_password",
+      },
+      { status: 409 }
+    );
+  }
+
   const ev = await saveUpload(vendorId, file.name, bytes);
-  // Deterministically extract + cache the file's text (shared by static + AI engines).
-  const extraction = await extractFile(file.name, bytes, { ocr: getSettings().static.ocrEnabled });
   const record = { ...ev, hash: extraction.hash, textChars: extraction.chars };
   const submission = await addEvidence(vendorId, controlId, record);
   return NextResponse.json({

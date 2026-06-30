@@ -19,7 +19,11 @@ export interface Extraction {
   method: "pdf" | "docx" | "text" | "ocr" | "none";
   // Distinguishes "couldn't read the file" from "file was empty/irrelevant" so
   // the assessor isn't misled by a blank result. Optional for legacy cache files.
-  status?: "ok" | "empty" | "failed" | "unsupported";
+  // "encrypted" = the file is password-protected and needs a password to read.
+  status?: "ok" | "empty" | "failed" | "unsupported" | "encrypted";
+  // Set only on the transient (uncached) "encrypted" result so the caller can
+  // tell "needs a password" from "the supplied password was wrong".
+  passwordError?: "required" | "incorrect";
 }
 
 export function hashBytes(buf: Buffer): string {
@@ -38,12 +42,25 @@ export function getExtractionByHash(hash?: string): Extraction | null {
   }
 }
 
-async function fromPdf(buf: Buffer): Promise<string> {
+async function fromPdf(buf: Buffer, password?: string): Promise<string> {
   const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: new Uint8Array(buf) });
-  const r: any = await parser.getText();
-  await parser.destroy?.();
-  return r?.text ?? (Array.isArray(r?.pages) ? r.pages.map((p: any) => p.text || "").join("\n") : "");
+  // pdf-parse/pdfjs decrypts when given the correct password, and throws a
+  // PasswordException (name "PasswordException") otherwise.
+  const parser = new PDFParse(password ? { data: new Uint8Array(buf), password } : { data: new Uint8Array(buf) });
+  try {
+    const r: any = await parser.getText();
+    return r?.text ?? (Array.isArray(r?.pages) ? r.pages.map((p: any) => p.text || "").join("\n") : "");
+  } finally {
+    await parser.destroy?.();
+  }
+}
+
+// pdfjs PasswordException: code 1 = needs a password, 2 = wrong password.
+function passwordErrorFrom(e: any): "required" | "incorrect" | null {
+  if (e && (e.name === "PasswordException" || /password/i.test(String(e?.message)))) {
+    return e?.code === 2 ? "incorrect" : "required";
+  }
+  return null;
 }
 async function fromDocx(buf: Buffer): Promise<string> {
   const mammoth: any = await import("mammoth");
@@ -60,25 +77,43 @@ async function fromImage(buf: Buffer): Promise<string> {
 const TEXT_EXT = new Set(["txt", "csv", "md", "json", "log", "yaml", "yml", "html", "htm"]);
 const IMG_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"]);
 
-export async function extractFile(filename: string, buf: Buffer, opts?: { ocr?: boolean }): Promise<Extraction> {
+export async function extractFile(filename: string, buf: Buffer, opts?: { ocr?: boolean; password?: string }): Promise<Extraction> {
   const hash = hashBytes(buf);
-  const cached = getExtractionByHash(hash);
-  if (cached) return cached;
+  // When a password is supplied we must re-attempt decryption, so bypass the
+  // (content-keyed) cache — otherwise a prior "encrypted" miss would shadow it.
+  if (!opts?.password) {
+    const cached = getExtractionByHash(hash);
+    if (cached) return cached;
+  }
 
   const ext = (filename.split(".").pop() || "").toLowerCase();
   let text = "";
   let method: Extraction["method"] = "none";
   let status: Extraction["status"] = "ok";
+  let passwordError: Extraction["passwordError"];
   const supported = ext === "pdf" || ext === "docx" || TEXT_EXT.has(ext) || (IMG_EXT.has(ext) && opts?.ocr !== false);
   try {
-    if (ext === "pdf") { text = await fromPdf(buf); method = "pdf"; }
+    if (ext === "pdf") { text = await fromPdf(buf, opts?.password); method = "pdf"; }
     else if (ext === "docx") { text = await fromDocx(buf); method = "docx"; }
     else if (TEXT_EXT.has(ext)) { text = buf.toString("utf8"); method = "text"; }
     else if (IMG_EXT.has(ext) && opts?.ocr !== false) { text = await fromImage(buf); method = "ocr"; }
-  } catch {
+  } catch (e) {
     text = "";
-    status = "failed"; // extractor unavailable/threw — distinct from "empty"
+    const pwErr = passwordErrorFrom(e);
+    if (pwErr) {
+      status = "encrypted"; method = "pdf";
+      // If we already supplied a password and it's still locked, it was wrong —
+      // regardless of which code pdfjs reports for this encryption scheme.
+      passwordError = opts?.password ? "incorrect" : pwErr;
+    } else status = "failed"; // extractor unavailable/threw — distinct from "empty"
   }
+
+  // Don't persist an encrypted miss: the same bytes can be read later once the
+  // vendor supplies the password. Return it transiently for the caller to prompt.
+  if (status === "encrypted") {
+    return { hash, type: ext, chars: 0, text: "", method, status, passwordError };
+  }
+
   text = (text || "").replace(/\s+/g, " ").trim().slice(0, MAX_CHARS);
   if (status !== "failed") status = !supported ? "unsupported" : text.length === 0 ? "empty" : "ok";
   const result: Extraction = { hash, type: ext, chars: text.length, text, method, status };

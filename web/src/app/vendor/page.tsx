@@ -126,6 +126,10 @@ export default function VendorPortal() {
   const scrollRestoreRef = useRef<number | null>(null);
   const toast = useToasts();
 
+  // Password prompt for an encrypted uploaded document.
+  const [pwPrompt, setPwPrompt] = useState<{ controlId: string; file: File; error?: string } | null>(null);
+  const [pwValue, setPwValue] = useState("");
+
   // Vera chatbot state
   const [chatOpen, setChatOpen] = useState(false);
   const [chatControlId, setChatControlId] = useState<string | null>(null);
@@ -384,13 +388,32 @@ export default function VendorPortal() {
   }
 
 
-  async function upload(controlId: string, file: File) {
+  function upload(controlId: string, file: File) {
+    return doUpload(controlId, file, {});
+  }
+
+  // Core upload. On a 409 "needs_password"/"wrong_password" (encrypted document),
+  // opens the password prompt instead of failing — the vendor enters the document
+  // password (or chooses to attach it unread), and we retry.
+  async function doUpload(controlId: string, file: File, opts: { password?: string; attachUnreadable?: boolean }) {
     setUploading((s) => ({ ...s, [controlId]: true }));
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("controlId", controlId);
+      if (opts.password) fd.append("password", opts.password);
+      if (opts.attachUnreadable) fd.append("attachUnreadable", "true");
       const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (res.status === 409) {
+        const data = await res.json().catch(() => ({}));
+        if (data.code === "needs_password" || data.code === "wrong_password") {
+          // Surface (or keep) the password prompt for this file.
+          setPwPrompt({ controlId, file, error: data.code === "wrong_password" ? data.error : undefined });
+          if (data.code === "wrong_password") toast.error(data.error);
+          return;
+        }
+        throw new Error(data.error || "Upload failed.");
+      }
       if (!res.ok) throw new Error(await errorMessage(res, "Upload failed."));
       scrollRestoreRef.current = window.scrollY; // keep position (no jump-to-top)
       setSub((await res.json()).submission);
@@ -400,7 +423,8 @@ export default function VendorPortal() {
         next.delete(controlId);
         return next;
       });
-      toast.success(`Uploaded ${file.name}`);
+      setPwPrompt(null);
+      toast.success(opts.attachUnreadable ? `Attached ${file.name} (not read — password not provided)` : `Uploaded ${file.name}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Upload failed.");
     } finally {
@@ -985,6 +1009,45 @@ export default function VendorPortal() {
           );
         })}
       </div>
+      {/* Password prompt for an encrypted uploaded document */}
+      {pwPrompt && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => { setPwPrompt(null); setPwValue(""); }} role="presentation">
+          <div onClick={(e) => e.stopPropagation()} className="glass w-full max-w-md rounded-2xl border border-border p-5">
+            <h3 className="flex items-center gap-2 text-base font-semibold"><Lock size={16} className="text-brand" /> Document is password-protected</h3>
+            <p className="mt-1 text-sm text-muted"><span className="font-medium text-fg">{pwPrompt.file.name}</span> can&apos;t be read without its password. Enter it so we can review the evidence.</p>
+            <form
+              onSubmit={(e) => { e.preventDefault(); if (pwValue) { const p = pwPrompt; setPwValue(""); doUpload(p.controlId, p.file, { password: pwValue }); } }}
+            >
+              <input
+                type="password"
+                autoFocus
+                value={pwValue}
+                onChange={(e) => setPwValue(e.target.value)}
+                placeholder="Document password"
+                className="mt-3 w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+              {pwPrompt.error && <p className="mt-1.5 text-xs text-danger">{pwPrompt.error}</p>}
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => { const p = pwPrompt; setPwValue(""); doUpload(p.controlId, p.file, { attachUnreadable: true }); }}
+                  className="text-xs font-medium text-muted underline-offset-2 hover:text-fg hover:underline"
+                  title="Attach the file as-is; it won't be machine-readable for review"
+                >
+                  Attach without password
+                </button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { setPwPrompt(null); setPwValue(""); }} className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-muted hover:text-fg">Cancel</button>
+                  <button type="submit" disabled={!pwValue || !!uploading[pwPrompt.controlId]} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60">
+                    {uploading[pwPrompt.controlId] ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />} Unlock &amp; upload
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Vera chat panel — slides in from bottom-right */}
       <AnimatePresence>
         {chatOpen && (
