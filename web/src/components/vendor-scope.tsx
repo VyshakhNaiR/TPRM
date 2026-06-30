@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Target, ChevronDown, Loader2, Send, Clock, CheckCircle2, XCircle } from "lucide-react";
 import { errorMessage, useToasts, Toaster } from "@/components/ui";
 import type { AssessmentScope, ScopeChangeRequest } from "@/lib/users";
@@ -26,6 +27,10 @@ export function VendorScope() {
   const [modalOpen, setModalOpen] = useState(false);
   const [justification, setJustification] = useState("");
   const [saving, setSaving] = useState(false);
+  // Portal target guard — the modal must render at <body>, not inside this
+  // .glass section (its backdrop-filter would otherwise clip a position:fixed child).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
   async function load() {
     try {
@@ -112,10 +117,11 @@ export function VendorScope() {
         </div>
       )}
 
-      {/* Request modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setModalOpen(false)} role="presentation">
-          <div onClick={(e) => e.stopPropagation()} className="glass w-full max-w-lg rounded-2xl border border-border p-5">
+      {/* Request modal — portalled to <body> so the section's backdrop-filter
+          can't clip it (that was the "not in frame / corrupted" bug). */}
+      {mounted && modalOpen && createPortal(
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setModalOpen(false)} role="presentation">
+          <div onClick={(e) => e.stopPropagation()} className="glass w-full max-w-lg rounded-2xl border border-border p-5 shadow-glow">
             <h3 className="text-base font-semibold">Request a scope change</h3>
             <p className="mt-1 text-sm text-muted">Describe what should change and why. Your assessor reviews every request; approved changes are versioned and audited.</p>
             <textarea value={justification} onChange={(e) => setJustification(e.target.value)} rows={5} placeholder="e.g. The 'Billing API' application was decommissioned in Q1 and should be removed from scope." className="mt-3 w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand" />
@@ -126,7 +132,8 @@ export function VendorScope() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
