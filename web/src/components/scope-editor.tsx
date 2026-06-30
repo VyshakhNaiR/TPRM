@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, Plus, Trash2, Save, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, Plus, Trash2, Save, CheckCircle2, XCircle, Clock, Sparkles } from "lucide-react";
 import { errorMessage, useToasts, Toaster } from "@/components/ui";
 import type { AssessmentScope, ScopeChangeRequest } from "@/lib/users";
 import { cn } from "@/lib/utils";
@@ -13,12 +13,47 @@ const HOSTING_OPTS: { value: AssessmentScope["hostingModel"]; label: string }[] 
   { value: "hybrid", label: "Hybrid" },
 ];
 const TYPE_OPTS = ["Onboarding", "Annual", "Re-assessment", "Ad-hoc"];
+const CLASSIFICATION_OPTS = [
+  { value: "public", label: "Public" },
+  { value: "internal", label: "Internal" },
+  { value: "confidential", label: "Confidential" },
+  { value: "regulated", label: "Regulated / PII" },
+];
+const ACCESS_OPTS = [
+  { value: "none", label: "No access" },
+  { value: "read", label: "Read-only" },
+  { value: "privileged", label: "Privileged" },
+];
+const LEVEL_OPTS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+const CONNECTIVITY_OPTS = [
+  { value: "none", label: "None" },
+  { value: "api", label: "API" },
+  { value: "vpn", label: "VPN" },
+  { value: "dedicated", label: "Dedicated link" },
+];
 
 const input = "w-full rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none focus:border-brand";
 const labelCls = "block text-xs font-semibold text-muted";
 
 function empty(): AssessmentScope {
-  return { services: [], applications: [], regions: [], dataTypes: [], assets: [], subcontractors: [], frameworks: ["None"], status: "draft", version: 1 };
+  return { services: [], applications: [], regions: [], dataTypes: [], subcontractors: [], frameworks: ["None"], status: "draft", version: 1 };
+}
+
+// Merge AI-inferred scope into the current form: an inferred value wins only when
+// it's non-empty, so the assessor never loses fields the document didn't cover.
+function mergeScope(cur: AssessmentScope, ai: Partial<AssessmentScope>): AssessmentScope {
+  const out: AssessmentScope = { ...cur };
+  const scalars: (keyof AssessmentScope)[] = ["name", "type", "periodStart", "periodEnd", "hostingModel", "cloudProvider", "dataClassification", "accessLevel", "businessCriticality", "dataVolume", "connectivity", "outOfScope"];
+  for (const k of scalars) { const v = ai[k]; if (v) (out as any)[k] = v; }
+  const lists: (keyof AssessmentScope)[] = ["services", "applications", "subcontractors", "regions", "dataTypes"];
+  for (const k of lists) { const v = ai[k] as unknown[] | undefined; if (Array.isArray(v) && v.length) (out as any)[k] = v; }
+  if (Array.isArray(ai.frameworks) && ai.frameworks.length && !(ai.frameworks.length === 1 && ai.frameworks[0] === "None")) out.frameworks = ai.frameworks;
+  if (ai.crossBorderTransfer) out.crossBorderTransfer = true;
+  return out;
 }
 
 export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendorName: string }) {
@@ -27,6 +62,8 @@ export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendor
   const [requests, setRequests] = useState<ScopeChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [autofilling, setAutofilling] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,6 +104,26 @@ export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendor
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not save scope.");
     } finally { setSaving(false); }
+  }
+
+  // Upload a scope document (Excel/PDF/Word) → AI structures it → merge the
+  // inferred fields into the form (assessor reviews + edits before saving).
+  async function autofill(file: File) {
+    setAutofilling(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/scope/extract", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not read that document."));
+      const { scope: ai, method } = await res.json();
+      setScope((cur) => mergeScope(cur, ai));
+      toast.success(method === "ai" ? "Scope auto-filled from the document — review and edit before saving." : "Scope drafted from the document (no AI configured) — please review.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not read that document.");
+    } finally {
+      setAutofilling(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   }
 
   async function decide(req: ScopeChangeRequest, decision: "approved" | "rejected") {
@@ -120,9 +177,15 @@ export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendor
             <h3 className="text-sm font-semibold">Assessment scope — {vendorName}</h3>
             <p className="text-xs text-muted">Assessor-defined. Vendors view this read-only and must request changes. <span className="font-medium text-fg">v{scope.version}</span> · <span className={cn("font-medium", scope.status === "active" ? "text-ok" : "text-muted")}>{scope.status}</span></p>
           </div>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60">
-            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}{saving ? "Saving…" : "Save scope"}
-          </button>
+          <div className="flex items-center gap-2">
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) autofill(f); }} />
+            <button onClick={() => fileRef.current?.click()} disabled={autofilling} title="Upload a scope document (Excel/PDF/Word) and let AI fill the fields" className="inline-flex items-center gap-2 rounded-xl border border-brand/40 bg-brand/5 px-3.5 py-2 text-sm font-semibold text-brand transition hover:bg-brand/10 disabled:opacity-60">
+              {autofilling ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}{autofilling ? "Reading…" : "Auto-fill from document"}
+            </button>
+            <button onClick={save} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60">
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}{saving ? "Saving…" : "Save scope"}
+            </button>
+          </div>
         </div>
 
         <div className="space-y-6 p-5">
@@ -158,15 +221,55 @@ export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendor
             </div>
           </div>
 
-          {/* Simple comma lists */}
+          {/* Risk-mapping parameters — drive the inherent-risk tier + framework applicability */}
+          <div className="rounded-xl border border-border/70 bg-surface-2/30 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">Risk profile (drives the inherent-risk tier)</p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <label className={labelCls}>Data classification
+                <select className={cn(input, "mt-1")} value={scope.dataClassification ?? ""} onChange={(e) => patch({ dataClassification: (e.target.value || undefined) as AssessmentScope["dataClassification"] })}>
+                  <option value="">—</option>
+                  {CLASSIFICATION_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className={labelCls}>Access to bank systems/data
+                <select className={cn(input, "mt-1")} value={scope.accessLevel ?? ""} onChange={(e) => patch({ accessLevel: (e.target.value || undefined) as AssessmentScope["accessLevel"] })}>
+                  <option value="">—</option>
+                  {ACCESS_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className={labelCls}>Business criticality
+                <select className={cn(input, "mt-1")} value={scope.businessCriticality ?? ""} onChange={(e) => patch({ businessCriticality: (e.target.value || undefined) as AssessmentScope["businessCriticality"] })}>
+                  <option value="">—</option>
+                  {LEVEL_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className={labelCls}>Data volume
+                <select className={cn(input, "mt-1")} value={scope.dataVolume ?? ""} onChange={(e) => patch({ dataVolume: (e.target.value || undefined) as AssessmentScope["dataVolume"] })}>
+                  <option value="">—</option>
+                  {LEVEL_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className={labelCls}>Connectivity / integration
+                <select className={cn(input, "mt-1")} value={scope.connectivity ?? ""} onChange={(e) => patch({ connectivity: (e.target.value || undefined) as AssessmentScope["connectivity"] })}>
+                  <option value="">—</option>
+                  {CONNECTIVITY_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 self-end pb-2 text-xs font-semibold text-muted">
+                <input type="checkbox" checked={!!scope.crossBorderTransfer} onChange={(e) => patch({ crossBorderTransfer: e.target.checked })} className="accent-brand" />
+                Cross-border data transfer
+              </label>
+            </div>
+          </div>
+
+          {/* Data residency + data types */}
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className={labelCls}>Regions <span className="font-normal">(comma-separated)</span><input className={cn(input, "mt-1")} value={scope.regions.join(", ")} onChange={(e) => patch({ regions: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="India, Singapore" /></label>
+            <label className={labelCls}>Data residency / regions <span className="font-normal">(comma-separated)</span><input className={cn(input, "mt-1")} value={scope.regions.join(", ")} onChange={(e) => patch({ regions: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="India, Singapore" /></label>
             <label className={labelCls}>Data types <span className="font-normal">(comma-separated)</span><input className={cn(input, "mt-1")} value={scope.dataTypes.join(", ")} onChange={(e) => patch({ dataTypes: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="PII, Cardholder data, KYC" /></label>
           </div>
 
           <RowList label="Services in scope" rows={scope.services} onChange={(services) => patch({ services })} fields={[{ key: "name", placeholder: "Service name" }, { key: "description", placeholder: "Description" }]} />
           <RowList label="Applications" rows={scope.applications} onChange={(applications) => patch({ applications })} fields={[{ key: "name", placeholder: "Application" }, { key: "url", placeholder: "URL" }, { key: "description", placeholder: "Description" }]} />
-          <RowList label="Critical assets" rows={scope.assets} onChange={(assets) => patch({ assets })} fields={[{ key: "name", placeholder: "Asset" }, { key: "type", placeholder: "Type" }, { key: "description", placeholder: "Description" }]} />
           <RowList label="Subcontractors / fourth parties" rows={scope.subcontractors} onChange={(subcontractors) => patch({ subcontractors })} fields={[{ key: "name", placeholder: "Subcontractor" }, { key: "service", placeholder: "Service provided" }]} />
 
           <div className="grid gap-4 sm:grid-cols-2">

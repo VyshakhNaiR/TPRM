@@ -34,7 +34,7 @@ import { TracerGraph } from "@/components/tracer-graph";
 import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat, Toaster, ErrorState, errorMessage, useToasts } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { consolidatedRating } from "@/lib/risk";
-import type { VendorContact } from "@/lib/users";
+import type { VendorContact, AssessmentScope } from "@/lib/users";
 import { type VendorReport, exportReportExcel, openReportPrint } from "@/lib/report";
 import { ScopeEditor } from "@/components/scope-editor";
 
@@ -85,7 +85,7 @@ export default function Console() {
   const [sendBackAllSaving, setSendBackAllSaving] = useState(false);
 
   // Override form (per-control verdict override).
-  const [vendorScope, setVendorScope] = useState<{ assets: any[]; applications: any[]; services: any[] } | null>(null);
+  const [vendorScope, setVendorScope] = useState<AssessmentScope | null>(null);
   const [scopePending, setScopePending] = useState(0);
   const [confidentialPdf, setConfidentialPdf] = useState(true);
 
@@ -714,20 +714,20 @@ export default function Console() {
                 )}
               </div>
               <div className="mt-0.5 text-sm text-muted">{submission?.status === "submitted" ? "Submitted for review" : "Assessment in progress"}</div>
-              {vendorScope && (vendorScope.assets.length + vendorScope.applications.length + vendorScope.services.length) > 0 && (
+              {vendorScope && (
                 <div className="mt-2 flex flex-wrap gap-1">
-                  {vendorScope.assets.slice(0, 2).map((a: any, i: number) => (
-                    <span key={i} className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-muted" title={a.description}>{a.name} ({a.type})</span>
-                  ))}
+                  {vendorScope.dataClassification && (
+                    <span className="rounded-full border border-mas/30 bg-mas/5 px-2 py-0.5 text-[10px] font-medium text-mas">Data: {vendorScope.dataClassification}</span>
+                  )}
+                  {vendorScope.businessCriticality && (
+                    <span className="rounded-full border border-warn/30 bg-warn/5 px-2 py-0.5 text-[10px] font-medium text-warn">Criticality: {vendorScope.businessCriticality}</span>
+                  )}
                   {vendorScope.applications.slice(0, 2).map((a: any, i: number) => (
-                    <span key={i} className="rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 text-[10px] text-brand" title={a.description}>{a.name}</span>
+                    <span key={`app${i}`} className="rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 text-[10px] text-brand" title={a.description}>{a.name}</span>
                   ))}
                   {vendorScope.services.slice(0, 1).map((s: any, i: number) => (
-                    <span key={i} className="rounded-full border border-ok/30 bg-ok/5 px-2 py-0.5 text-[10px] text-ok" title={s.description}>{s.name}</span>
+                    <span key={`svc${i}`} className="rounded-full border border-ok/30 bg-ok/5 px-2 py-0.5 text-[10px] text-ok" title={s.description}>{s.name}</span>
                   ))}
-                  {(vendorScope.assets.length + vendorScope.applications.length + vendorScope.services.length) > 5 && (
-                    <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-muted">+more</span>
-                  )}
                 </div>
               )}
             </div>

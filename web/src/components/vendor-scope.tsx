@@ -8,6 +8,10 @@ import type { AssessmentScope, ScopeChangeRequest } from "@/lib/users";
 import { cn } from "@/lib/utils";
 
 const HOSTING_LABEL: Record<string, string> = { on_prem: "On-premise", cloud: "Cloud", hybrid: "Hybrid" };
+const CLASSIFICATION_LABEL: Record<string, string> = { public: "Public", internal: "Internal", confidential: "Confidential", regulated: "Regulated / PII" };
+const ACCESS_LABEL: Record<string, string> = { none: "No access", read: "Read-only", privileged: "Privileged" };
+const CONNECTIVITY_LABEL: Record<string, string> = { none: "None", api: "API", vpn: "VPN", dedicated: "Dedicated link" };
+const cap = (s?: string) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -60,7 +64,7 @@ export function VendorScope() {
   }
 
   if (!scope) return null;
-  const isEmpty = !scope.name && scope.services.length === 0 && scope.applications.length === 0 && scope.assets.length === 0;
+  const isEmpty = !scope.name && scope.services.length === 0 && scope.applications.length === 0 && !scope.dataClassification;
   const pending = requests.find((r) => r.status === "pending");
   const lastDecided = requests.find((r) => r.status !== "pending");
 
@@ -87,11 +91,16 @@ export function VendorScope() {
               {(scope.periodStart || scope.periodEnd) && <Field label="Period">{scope.periodStart || "—"} → {scope.periodEnd || "—"}</Field>}
               <Field label="Frameworks">{scope.frameworks.join(", ")}</Field>
               {scope.hostingModel && <Field label="Hosting">{HOSTING_LABEL[scope.hostingModel]}{scope.cloudProvider ? ` · ${scope.cloudProvider}` : ""}</Field>}
-              {scope.regions.length > 0 && <Field label="Regions">{scope.regions.join(", ")}</Field>}
+              {scope.dataClassification && <Field label="Data classification">{CLASSIFICATION_LABEL[scope.dataClassification]}</Field>}
+              {scope.accessLevel && <Field label="Access level">{ACCESS_LABEL[scope.accessLevel]}</Field>}
+              {scope.businessCriticality && <Field label="Business criticality">{cap(scope.businessCriticality)}</Field>}
+              {scope.dataVolume && <Field label="Data volume">{cap(scope.dataVolume)}</Field>}
+              {scope.connectivity && <Field label="Connectivity">{CONNECTIVITY_LABEL[scope.connectivity]}</Field>}
+              {scope.crossBorderTransfer && <Field label="Cross-border">Data transferred across borders</Field>}
+              {scope.regions.length > 0 && <Field label="Data residency">{scope.regions.join(", ")}</Field>}
               {scope.dataTypes.length > 0 && <Field label="Data types">{scope.dataTypes.join(", ")}</Field>}
               {scope.services.length > 0 && <Field label="Services">{scope.services.map((x) => x.name).join(", ")}</Field>}
               {scope.applications.length > 0 && <Field label="Applications">{scope.applications.map((x) => x.name).join(", ")}</Field>}
-              {scope.assets.length > 0 && <Field label="Critical assets">{scope.assets.map((x) => x.name).join(", ")}</Field>}
               {scope.subcontractors.length > 0 && <Field label="Subcontractors">{scope.subcontractors.map((x) => x.name).join(", ")}</Field>}
               {scope.outOfScope && <Field label="Out of scope">{scope.outOfScope}</Field>}
             </div>

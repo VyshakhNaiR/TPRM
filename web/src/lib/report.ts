@@ -21,7 +21,19 @@ export interface ReportControl {
 export interface VendorReport {
   vendorName: string;
   generatedAt: string; // caller passes a formatted timestamp (client-side)
-  scope?: { assets: { name: string }[]; applications: { name: string }[]; services: { name: string }[] } | null;
+  scope?: {
+    applications?: { name: string }[];
+    services?: { name: string }[];
+    subcontractors?: { name: string }[];
+    dataClassification?: string;
+    accessLevel?: string;
+    businessCriticality?: string;
+    dataVolume?: string;
+    connectivity?: string;
+    crossBorderTransfer?: boolean;
+    regions?: string[];
+    dataTypes?: string[];
+  } | null;
   profile?: { regulators?: string[]; infraType?: string; csp?: string; engagementType?: string } | null;
   summary: { assessed: number; compliant: number; nc: number; na: number; posture: number };
   rating: { rating: string; risk: string; approval: string };
@@ -50,6 +62,9 @@ const VERDICT_COLOR: Record<string, string> = {
 export function reportHtml(r: VendorReport): string {
   const reg = r.profile?.regulators?.length ? r.profile.regulators.join(", ") : "None";
   const infra = [r.profile?.infraType, r.profile?.csp].filter(Boolean).join(" · ") || "—";
+  const cap = (s?: string) => (s ? s[0].toUpperCase() + s.slice(1) : "");
+  const scopeRow = (label: string, value?: string) =>
+    value ? `<div class="scope-row"><span class="scope-label">${esc(label)}</span><span>${esc(value)}</span></div>` : "";
   const scopeItems = (label: string, items?: { name: string }[]) =>
     items && items.length
       ? `<div class="scope-row"><span class="scope-label">${esc(label)}</span><span>${items.map((i) => esc(i.name)).join(", ")}</span></div>`
@@ -127,9 +142,17 @@ export function reportHtml(r: VendorReport): string {
   <div class="scope-row"><span class="scope-label">Engagement</span><span>${esc(r.profile?.engagementType === "existing" ? "Existing vendor" : r.profile?.engagementType === "due_diligence" ? "Due diligence" : "—")}</span></div>
   <div class="scope-row"><span class="scope-label">Regulatory frameworks</span><span>${esc(reg)}</span></div>
   <div class="scope-row"><span class="scope-label">Hosting</span><span>${esc(infra)}</span></div>
+  ${scopeRow("Data classification", cap(r.scope?.dataClassification))}
+  ${scopeRow("Access level", r.scope?.accessLevel)}
+  ${scopeRow("Business criticality", cap(r.scope?.businessCriticality))}
+  ${scopeRow("Data volume", cap(r.scope?.dataVolume))}
+  ${scopeRow("Connectivity", r.scope?.connectivity)}
+  ${r.scope?.crossBorderTransfer ? `<div class="scope-row"><span class="scope-label">Cross-border</span><span>Data transferred across borders</span></div>` : ""}
+  ${r.scope?.regions?.length ? `<div class="scope-row"><span class="scope-label">Data residency</span><span>${esc(r.scope.regions.join(", "))}</span></div>` : ""}
+  ${r.scope?.dataTypes?.length ? `<div class="scope-row"><span class="scope-label">Data types</span><span>${esc(r.scope.dataTypes.join(", "))}</span></div>` : ""}
   ${scopeItems("Services", r.scope?.services)}
   ${scopeItems("Applications", r.scope?.applications)}
-  ${scopeItems("Critical assets", r.scope?.assets)}
+  ${scopeItems("Subcontractors", r.scope?.subcontractors)}
 
   <h2>Control-by-control findings</h2>
   <table>

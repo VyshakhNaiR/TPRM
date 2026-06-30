@@ -4,6 +4,21 @@ import crypto from "crypto";
 import type { Session } from "./auth";
 import { withLock } from "./lock";
 import { IS_PROD } from "./config";
+import { computeTier, type IRQ } from "./risk";
+
+// Derive the inherent-risk questionnaire inputs from the assessment-scope
+// parameters, so the scope drives the risk tier (null if not enough is set).
+function scopeToIRQ(scope: AssessmentScope): IRQ | null {
+  if (!scope.dataClassification && !scope.accessLevel && !scope.businessCriticality && !scope.dataVolume) return null;
+  return {
+    // IRQ has no "public" band — treat public data as the lowest sensitivity.
+    dataSensitivity: scope.dataClassification === "public" ? "none" : (scope.dataClassification ?? "internal"),
+    access: scope.accessLevel === "read" ? "limited" : (scope.accessLevel ?? "none"),
+    criticality: scope.businessCriticality ?? "low",
+    volume: scope.dataVolume ?? "low",
+    frameworks: scope.frameworks.filter((f) => f !== "None"),
+  };
+}
 
 // Dynamic, persisted vendor accounts (onboarding). File-backed for the demo.
 // PRODUCTION: move to the DB; passwords already hashed (scrypt) here.
@@ -38,6 +53,13 @@ export interface VendorProfile {
   scopeChangeRequests?: ScopeChangeRequest[];
 }
 
+// Scope parameters that drive the inherent-risk tier + regulatory mapping.
+export type DataClassification = "public" | "internal" | "confidential" | "regulated";
+export type AccessLevel = "none" | "read" | "privileged";
+export type Criticality = "low" | "medium" | "high";
+export type DataVolume = "low" | "medium" | "high";
+export type Connectivity = "none" | "api" | "vpn" | "dedicated";
+
 // The assessment scope is OWNED BY THE ASSESSOR. Vendors view it read-only and
 // must file a change request to alter it (versioned + audited).
 export interface AssessmentScope {
@@ -49,10 +71,16 @@ export interface AssessmentScope {
   applications: { name: string; url?: string; description?: string }[];
   hostingModel?: "on_prem" | "cloud" | "hybrid";
   cloudProvider?: string;
-  regions: string[];
+  regions: string[]; // data residency — where data is stored/processed
   dataTypes: string[];
-  assets: { name: string; type?: string; description?: string }[]; // critical assets
-  subcontractors: { name: string; service?: string }[];
+  subcontractors: { name: string; service?: string }[]; // fourth parties
+  // ---- Risk-mapping parameters (feed computeTier + framework applicability) ----
+  dataClassification?: DataClassification;
+  accessLevel?: AccessLevel; // vendor's access to the bank's systems/data
+  businessCriticality?: Criticality;
+  dataVolume?: DataVolume;
+  connectivity?: Connectivity; // integration / network connection type
+  crossBorderTransfer?: boolean; // data leaves the home jurisdiction
   frameworks: string[]; // drives the questionnaire (RBI / MAS / SEBI / None)
   outOfScope?: string;
   status: "draft" | "active";
@@ -74,7 +102,7 @@ export interface ScopeChangeRequest {
 
 export function emptyScope(frameworks: string[] = []): AssessmentScope {
   return {
-    services: [], applications: [], regions: [], dataTypes: [], assets: [], subcontractors: [],
+    services: [], applications: [], regions: [], dataTypes: [], subcontractors: [],
     frameworks, status: "draft", version: 1,
   };
 }
@@ -247,6 +275,14 @@ export function setAssessmentScope(vendorId: string, scope: AssessmentScope, act
     entry.profile.assessmentScope = next;
     // Keep the regulator-driven questionnaire selection consistent with scope.
     entry.profile.regulators = next.frameworks;
+    // Scope parameters drive the inherent-risk tier (assessor-set => authoritative).
+    const irq = scopeToIRQ(next);
+    if (irq) {
+      const { tier, score } = computeTier(irq);
+      entry.profile.tier = tier;
+      entry.profile.tierScore = score;
+      entry.profile.tierSelfDeclared = false;
+    }
     all[entry.username] = entry;
     writeAll(all);
     return next;
