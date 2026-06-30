@@ -30,7 +30,20 @@ export async function GET() {
   const s = await currentSession();
   if (!can(s?.role, "submission:read:all")) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-  const rows = [{ vendorId: "apex", name: "Apex Cloud Services Pvt. Ltd. (demo)" }, ...listVendors().map((v) => ({ vendorId: v.vendorId, name: v.name }))];
+  const rows = [
+    { vendorId: "apex", name: "Apex Cloud Services Pvt. Ltd. (demo)", profile: null as Record<string, unknown> | null },
+    ...listVendors().map((v) => ({
+      vendorId: v.vendorId,
+      name: v.name,
+      // Slim profile for report headers (regulatory scope + hosting).
+      profile: {
+        regulators: v.profile?.regulators ?? [],
+        infraType: v.profile?.infraType,
+        csp: v.profile?.csp,
+        engagementType: v.profile?.engagementType,
+      } as Record<string, unknown>,
+    })),
+  ];
   const vendors = rows.map((r) => {
     const sub = getSubmission(r.vendorId);
     const answered = CONTROLS.filter((c) => sub.answers[c.id] && (sub.answers[c.id].response?.trim() || sub.answers[c.id].applicable === false)).length;

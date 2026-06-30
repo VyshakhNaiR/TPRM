@@ -3,6 +3,13 @@ import { THREATS, threatsForFamily } from "./threats";
 import { listVendors } from "./users";
 import { getSubmission } from "./store";
 import { controlsForVendorId } from "./scope";
+import { APPROVAL_MATRIX } from "./risk";
+
+// Map a posture-derived rating to its residual-risk band + approval authority.
+function approvalForRating(rating: string): { risk: string; approval: string } {
+  const m = APPROVAL_MATRIX.find((x) => x.rating === rating);
+  return m ? { risk: m.risk, approval: m.approval } : { risk: "—", approval: "—" };
+}
 
 // Deterministic 0..1 hash so synthetic verdicts are stable across renders.
 function h(s: string): number {
@@ -229,17 +236,38 @@ export interface RequirementDetail {
   question: string;
   verdict: Verdict;
   frameworks: string[];
+  // Enriched fields for the per-vendor report (empty for synthetic demo vendors).
+  response: string;
+  coverage?: string;
+  evidence: string[];
+  override?: { verdict: string; risk?: string; rationale: string; by?: string };
 }
-export function vendorRequirementDetail(vendorId: string): { vendor: CustomerRow | null; controls: RequirementDetail[] } {
+export interface VendorDetailPayload {
+  vendor: CustomerRow | null;
+  controls: RequirementDetail[];
+  rating: { rating: string; risk: string; approval: string };
+}
+export function vendorRequirementDetail(vendorId: string): VendorDetailPayload {
   const v = vendorObjs().find((x) => x.id === vendorId);
-  if (!v) return { vendor: null, controls: [] };
+  if (!v) return { vendor: null, controls: [], rating: { rating: "—", risk: "—", approval: "—" } };
   const row = customerList().find((r) => r.vendorId === vendorId) ?? null;
-  const controls: RequirementDetail[] = controlsForVendorId(vendorId).map((c) => ({
-    id: c.id,
-    family: c.family,
-    question: c.question,
-    verdict: verdictOf(v, c),
-    frameworks: Array.from(new Set(c.mappings.map((m) => m.framework))),
-  }));
-  return { vendor: row, controls };
+  const real = v._real;
+  const controls: RequirementDetail[] = controlsForVendorId(vendorId).map((c) => {
+    const a = real?.answers?.[c.id];
+    const ov = real?.overrides?.[c.id];
+    return {
+      id: c.id,
+      family: c.family,
+      question: c.question,
+      verdict: verdictOf(v, c),
+      frameworks: Array.from(new Set(c.mappings.map((m) => m.framework))),
+      response: a?.response || (a?.applicable === false ? "Not Applicable" : ""),
+      coverage: a?.coverage,
+      evidence: (a?.evidence ?? []).map((e: any) => e.filename),
+      override: ov?.verdict ? { verdict: ov.verdict, risk: ov.risk, rationale: ov.rationale, by: ov.by } : undefined,
+    };
+  });
+  const ratingStr = row?.rating ?? "—";
+  const { risk, approval } = approvalForRating(ratingStr);
+  return { vendor: row, controls, rating: { rating: ratingStr, risk, approval } };
 }

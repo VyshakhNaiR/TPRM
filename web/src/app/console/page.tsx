@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import * as XLSX from "xlsx";
 import {
   Building2,
   FileText,
@@ -35,10 +34,11 @@ import { VerdictBadge, RiskBadge, ConfidenceMeter, RiskDial, Stat, Toaster, Erro
 import { cn } from "@/lib/utils";
 import { consolidatedRating } from "@/lib/risk";
 import type { VendorContact } from "@/lib/users";
+import { type VendorReport, exportReportExcel, openReportPrint } from "@/lib/report";
 
 export default function Console() {
   const router = useRouter();
-  const [vendors, setVendors] = useState<{ vendorId: string; name: string; answered: number; total: number; status: string }[]>([]);
+  const [vendors, setVendors] = useState<{ vendorId: string; name: string; answered: number; total: number; status: string; profile?: VendorReport["profile"] }[]>([]);
   const [vendorId, setVendorId] = useState("apex");
   const [submission, setSubmission] = useState<any>(null);
   const [loadError, setLoadError] = useState("");
@@ -377,42 +377,48 @@ export default function Console() {
     }
   }
 
-  // Export per-vendor compliance report as Excel.
-  function exportVendorReport() {
-    try {
-      const wb = XLSX.utils.book_new();
-      const summaryData = [{
-        Vendor: selectedVendorName,
-        "Assessment Date": new Date().toLocaleDateString("en-GB"),
-        "Assessed Controls": summary.assessed,
-        Compliant: summary.compliant,
-        "Non-Compliant": summary.nc,
-        "Not Applicable": summary.na,
-        "Posture Score (%)": summary.posture,
-        "Consolidated Rating": consolidatedRating(Object.values(results).filter((r) => r.verdict === "Non-Compliant").map((r) => r.risk)).rating,
-      }];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), "Summary");
-      const reqData = controls.map((c) => {
+  // Assemble the shared per-vendor report payload from current console state.
+  function buildReport(): VendorReport {
+    const profile = vendors.find((v) => v.vendorId === vendorId)?.profile as VendorReport["profile"] | undefined;
+    return {
+      vendorName: selectedVendorName,
+      generatedAt: new Date().toLocaleString("en-GB"),
+      scope: vendorScope,
+      profile: profile ?? null,
+      summary: { assessed: summary.assessed, compliant: summary.compliant, nc: summary.nc, na: summary.na, posture: summary.posture },
+      rating: consolidatedRating(Object.values(results).filter((r) => r.verdict === "Non-Compliant").map((r) => r.risk)),
+      controls: controls.map((c) => {
         const r = results[c.id];
         const ans = submission?.answers?.[c.id];
+        const ov = overrides?.[c.id];
         return {
-          "Control ID": c.id,
-          Family: c.family,
-          Requirement: c.question,
-          "Vendor Response": ans?.response || (ans?.applicable === false ? "Not Applicable" : ""),
-          Verdict: r?.verdict ?? "Not assessed",
-          Risk: r?.risk ?? "",
-          "Risk Statement": r?.riskStatement ?? "",
-          Recommendations: (r?.recommendations ?? []).join("; "),
+          id: c.id,
+          family: c.family,
+          question: c.question,
+          response: ans?.response || (ans?.applicable === false ? "Not Applicable" : ""),
+          coverage: ans?.coverage,
+          evidence: (ans?.evidence ?? []).map((e: any) => e.filename),
+          verdict: r?.verdict ?? "Not assessed",
+          risk: r?.risk ?? "",
+          riskStatement: r?.riskStatement,
+          recommendations: r?.recommendations ?? [],
+          override: ov ? { verdict: ov.verdict, risk: ov.risk, rationale: ov.rationale, by: ov.by } : undefined,
         };
-      });
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(reqData), "Requirements");
-      const slug = selectedVendorName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30);
-      XLSX.writeFile(wb, `tprm-report-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }),
+    };
+  }
+
+  function exportVendorReport() {
+    try {
+      exportReportExcel(buildReport());
       toast.success(`${selectedVendorName} report exported.`);
     } catch {
       toast.error("Export failed.");
     }
+  }
+
+  function exportVendorPdf() {
+    if (!openReportPrint(buildReport())) toast.error("Allow pop-ups to generate the PDF report.");
   }
 
   // Set an assessor verdict override, then re-adjudicate so the result reflects it.
@@ -541,14 +547,24 @@ export default function Console() {
                 <option key={v.vendorId} value={v.vendorId}>{v.name} ({v.answered}/{v.total})</option>
               ))}
             </select>
-            <button
-              onClick={exportVendorReport}
-              disabled={summary.assessed === 0}
-              title="Export compliance report as Excel"
-              className="inline-flex items-center gap-2 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted transition hover:text-fg disabled:opacity-40"
-            >
-              <Download size={16} /> Export report
-            </button>
+            <div className="inline-flex overflow-hidden rounded-xl border border-border">
+              <button
+                onClick={exportVendorPdf}
+                disabled={summary.assessed === 0}
+                title="Generate assessment report as PDF"
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-muted transition hover:text-fg disabled:opacity-40"
+              >
+                <FileText size={16} /> PDF
+              </button>
+              <button
+                onClick={exportVendorReport}
+                disabled={summary.assessed === 0}
+                title="Export assessment report as Excel"
+                className="inline-flex items-center gap-2 border-l border-border px-3 py-2 text-sm font-medium text-muted transition hover:text-fg disabled:opacity-40"
+              >
+                <Download size={16} /> Excel
+              </button>
+            </div>
             <button
               onClick={runAll}
               disabled={runningAll}

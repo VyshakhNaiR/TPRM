@@ -27,6 +27,7 @@ import {
   useToasts,
 } from "@/components/ui";
 import { cn, FRAMEWORK_VAR } from "@/lib/utils";
+import { type VendorReport, exportReportExcel, openReportPrint } from "@/lib/report";
 
 /* ------------------------------------------------------------------ */
 /* Types (mirror the /api/customer payloads)                           */
@@ -56,11 +57,16 @@ interface RequirementDetail {
   question: string;
   verdict: Verdict;
   frameworks: string[];
+  response: string;
+  coverage?: string;
+  evidence: string[];
+  override?: { verdict: string; risk?: string; rationale: string; by?: string };
 }
 
 interface DetailPayload {
   vendor: CustomerRow | null;
   controls: RequirementDetail[];
+  rating: { rating: string; risk: string; approval: string };
 }
 
 type SortKey = "name" | "tier" | "posture" | "nextDueAt";
@@ -362,11 +368,13 @@ function DrillDown({
   loading,
   onClose,
   onExport,
+  onExportPdf,
 }: {
   detail: DetailPayload | null;
   loading: boolean;
   onClose: () => void;
   onExport: (d: DetailPayload) => void;
+  onExportPdf: (d: DetailPayload) => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -423,12 +431,20 @@ function DrillDown({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {detail && detail.vendor && (
-              <button
-                onClick={() => onExport(detail)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg"
-              >
-                <FileSpreadsheet size={14} /> Excel
-              </button>
+              <div className="inline-flex overflow-hidden rounded-xl border border-border">
+                <button
+                  onClick={() => onExportPdf(detail)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted hover:text-fg"
+                >
+                  <Printer size={14} /> PDF
+                </button>
+                <button
+                  onClick={() => onExport(detail)}
+                  className="inline-flex items-center gap-1.5 border-l border-border px-3 py-2 text-xs font-medium text-muted hover:text-fg"
+                >
+                  <FileSpreadsheet size={14} /> Excel
+                </button>
+              </div>
             )}
             <button
               onClick={onClose}
@@ -656,42 +672,55 @@ export default function CustomerPortfolio() {
     }
   }
 
+  // Assemble the shared per-vendor report payload from the customer drill-down.
+  function customerReport(d: DetailPayload): VendorReport | null {
+    if (!d.vendor) return null;
+    return {
+      vendorName: d.vendor.name,
+      generatedAt: new Date().toLocaleString("en-GB"),
+      scope: null,
+      profile: { regulators: d.vendor.regulators },
+      summary: {
+        assessed: d.vendor.compliant + d.vendor.nc,
+        compliant: d.vendor.compliant,
+        nc: d.vendor.nc,
+        na: d.vendor.na,
+        posture: d.vendor.posture,
+      },
+      rating: d.rating,
+      controls: d.controls.map((c) => ({
+        id: c.id,
+        family: c.family,
+        question: c.question,
+        response: c.response,
+        coverage: c.coverage,
+        evidence: c.evidence,
+        verdict: c.verdict,
+        risk: "",
+        recommendations: [],
+        override: c.override,
+      })),
+    };
+  }
+
   function exportVendorExcel(d: DetailPayload) {
+    const r = customerReport(d);
+    if (!r) return;
     try {
-      if (!d.vendor) return;
-      const wb = XLSX.utils.book_new();
-      const summaryWs = XLSX.utils.json_to_sheet([
-        {
-          Vendor: d.vendor.name,
-          Criticality: d.vendor.tier,
-          "Compliance status": d.vendor.rating,
-          "Posture %": d.vendor.posture,
-          Compliant: d.vendor.compliant,
-          "Non-Compliant": d.vendor.nc,
-          "Not Applicable": d.vendor.na,
-          Regulators: d.vendor.regulators.join(", ") || "—",
-          "TPRM initiated": fmtDate(d.vendor.initiatedAt),
-          "Next due": fmtDate(d.vendor.nextDueAt),
-        },
-      ]);
-      XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
-      const reqWs = XLSX.utils.json_to_sheet(
-        d.controls.map((c) => ({
-          Family: c.family,
-          Requirement: c.question,
-          Verdict: c.verdict,
-          Frameworks: c.frameworks.join(", ") || "—",
-        }))
-      );
-      XLSX.utils.book_append_sheet(wb, reqWs, "Requirements");
-      const slug = d.vendor.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "vendor";
-      XLSX.writeFile(wb, `tprm-${slug}.xlsx`);
-      success(`${d.vendor.name} exported to Excel.`);
+      exportReportExcel(r);
+      success(`${r.vendorName} exported to Excel.`);
     } catch {
       error("Excel export failed.");
     }
   }
 
+  function exportVendorPdf(d: DetailPayload) {
+    const r = customerReport(d);
+    if (!r) return;
+    if (!openReportPrint(r)) error("Allow pop-ups to generate the PDF report.");
+  }
+
+  // Portfolio-level print (the whole list) — per-vendor PDFs use the drawer.
   function exportPdf() {
     success("Opening print dialog — choose ‘Save as PDF’.");
     setTimeout(() => window.print(), 150);
@@ -858,6 +887,7 @@ export default function CustomerPortfolio() {
             loading={detailLoading}
             onClose={closeDrill}
             onExport={exportVendorExcel}
+            onExportPdf={exportVendorPdf}
           />
         )}
       </AnimatePresence>
