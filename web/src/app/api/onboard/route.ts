@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createVendor, updateVendorProfile, isValidEmail, type VendorProfile } from "@/lib/users";
+import { createVendor, updateVendorProfile, setAssessmentScope, isValidEmail, type VendorProfile } from "@/lib/users";
+import { sanitizeScope } from "@/lib/scope-sanitize";
 import { currentSession, can } from "@/lib/auth";
 import { computeTier } from "@/lib/risk";
 import { audit } from "@/lib/audit";
@@ -66,6 +67,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Onboarding failed." }, { status: 500 });
   }
   const vendorId = session.vendorId!;
+
+  // Assessment scope defined at onboarding (assessor-owned, versioned). This also
+  // re-derives the inherent-risk tier from the scope's risk parameters.
+  const scopeRaw = form.get("scope");
+  if (scopeRaw) {
+    try {
+      const parsed = JSON.parse(String(scopeRaw));
+      await setAssessmentScope(vendorId, sanitizeScope(parsed), s!.username);
+    } catch { /* scope is best-effort at onboarding; assessor can set it later */ }
+  }
 
   // Existing vendor: store agreement + last audit report; seed prior-findings.
   let priorCount = 0;

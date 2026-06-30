@@ -13,6 +13,8 @@ import {
   ExternalLink,
   RotateCcw,
   FileText,
+  Sparkles,
+  Target,
 } from "lucide-react";
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -80,6 +82,29 @@ const INITIAL: FormState = {
 
 const REGULATORS: Regulator[] = ["RBI", "MAS", "SEBI", "None"];
 
+interface ScopeDraft {
+  name: string;
+  type: string;
+  connectivity: "" | "none" | "api" | "vpn" | "dedicated";
+  crossBorderTransfer: boolean;
+  regions: string; // comma-separated
+  dataTypes: string; // comma-separated
+  outOfScope: string;
+  // AI-extract pass-throughs (not edited inline at onboarding)
+  services: { name: string; description?: string }[];
+  applications: { name: string; url?: string; description?: string }[];
+  subcontractors: { name: string; service?: string }[];
+}
+const INITIAL_SCOPE: ScopeDraft = {
+  name: "", type: "Onboarding", connectivity: "", crossBorderTransfer: false,
+  regions: "", dataTypes: "", outOfScope: "", services: [], applications: [], subcontractors: [],
+};
+// Map between the onboarding risk fields and the scope's classification vocab.
+const SENS_TO_CLASS: Record<string, string> = { none: "public", internal: "internal", confidential: "confidential", regulated: "regulated" };
+const CLASS_TO_SENS: Record<string, FormState["dataSensitivity"]> = { public: "none", internal: "internal", confidential: "confidential", regulated: "regulated" };
+const ACCESS_TO_LEVEL: Record<string, string> = { none: "none", limited: "read", privileged: "privileged" };
+const LEVEL_TO_ACCESS: Record<string, FormState["access"]> = { none: "none", read: "limited", privileged: "privileged" };
+
 export default function Onboard() {
   const router = useRouter();
   const toast = useToasts();
@@ -93,11 +118,64 @@ export default function Onboard() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OnboardResult | null>(null);
 
+  // Assessment-scope fields not already captured by the risk-profile section.
+  // Lists (services/applications/subcontractors) are populated by AI extract and
+  // passed through; detailed editing happens later in the console scope tab.
+  const [scopeDraft, setScopeDraft] = useState<ScopeDraft>(INITIAL_SCOPE);
+  const [scopeAutofilling, setScopeAutofilling] = useState(false);
+  const scopeFileRef = useRef<HTMLInputElement>(null);
+
   const agreementRef = useRef<HTMLInputElement>(null);
   const lastAuditRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((s) => ({ ...s, [k]: v }));
+  const setScope = <K extends keyof ScopeDraft>(k: K, v: ScopeDraft[K]) => setScopeDraft((s) => ({ ...s, [k]: v }));
+
+  // Upload a scope sheet OR a contract/MSA → AI structures it → apply across the
+  // risk-profile fields and the scope draft (assessor reviews + edits before submit).
+  async function autofillScope(file: File) {
+    setScopeAutofilling(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/scope/extract", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not read that document."));
+      const { scope: ai, method } = await res.json();
+      // Apply to the risk-profile fields where the doc gave a value.
+      setF((s) => ({
+        ...s,
+        dataSensitivity: ai.dataClassification ? (CLASS_TO_SENS[ai.dataClassification] ?? s.dataSensitivity) : s.dataSensitivity,
+        access: ai.accessLevel ? (LEVEL_TO_ACCESS[ai.accessLevel] ?? s.access) : s.access,
+        criticality: ai.businessCriticality || s.criticality,
+        volume: ai.dataVolume || s.volume,
+        infraType: ai.hostingModel || s.infraType,
+        csp: ai.cloudProvider || s.csp,
+      }));
+      if (Array.isArray(ai.frameworks) && ai.frameworks.length && !(ai.frameworks.length === 1 && ai.frameworks[0] === "None")) {
+        setRegs(ai.frameworks.filter((x: string) => REGULATORS.includes(x as Regulator)));
+      }
+      setScopeDraft((s) => ({
+        ...s,
+        name: ai.name || s.name,
+        type: ai.type || s.type,
+        connectivity: ai.connectivity || s.connectivity,
+        crossBorderTransfer: ai.crossBorderTransfer ?? s.crossBorderTransfer,
+        regions: Array.isArray(ai.regions) && ai.regions.length ? ai.regions.join(", ") : s.regions,
+        dataTypes: Array.isArray(ai.dataTypes) && ai.dataTypes.length ? ai.dataTypes.join(", ") : s.dataTypes,
+        outOfScope: ai.outOfScope || s.outOfScope,
+        services: ai.services?.length ? ai.services : s.services,
+        applications: ai.applications?.length ? ai.applications : s.applications,
+        subcontractors: ai.subcontractors?.length ? ai.subcontractors : s.subcontractors,
+      }));
+      toast.success(method === "ai" ? "Scope auto-filled from the document — review the fields below." : "Scope drafted from the document — please review.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not read that document.");
+    } finally {
+      setScopeAutofilling(false);
+      if (scopeFileRef.current) scopeFileRef.current.value = "";
+    }
+  }
 
   // Auth gate — only assessors / root may onboard vendors.
   useEffect(() => {
@@ -146,9 +224,11 @@ export default function Onboard() {
   function resetForm() {
     setF(INITIAL);
     setRegs([]);
+    setScopeDraft(INITIAL_SCOPE);
     setResult(null);
     if (agreementRef.current) agreementRef.current.value = "";
     if (lastAuditRef.current) lastAuditRef.current.value = "";
+    if (scopeFileRef.current) scopeFileRef.current.value = "";
   }
 
   async function submit(e: React.FormEvent) {
@@ -186,6 +266,31 @@ export default function Onboard() {
     fd.append("access", f.access);
     fd.append("criticality", f.criticality);
     fd.append("volume", f.volume);
+
+    // Assessment scope (assessor-defined at onboarding). Built from the risk
+    // profile + scope draft; persisted server-side as an active, versioned scope.
+    const csv = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
+    const scope = {
+      name: scopeDraft.name.trim(),
+      type: scopeDraft.type,
+      hostingModel: f.infraType,
+      cloudProvider: showCsp ? f.csp.trim() : "",
+      dataClassification: SENS_TO_CLASS[f.dataSensitivity],
+      accessLevel: ACCESS_TO_LEVEL[f.access],
+      businessCriticality: f.criticality,
+      dataVolume: f.volume,
+      connectivity: scopeDraft.connectivity || undefined,
+      crossBorderTransfer: scopeDraft.crossBorderTransfer,
+      regions: csv(scopeDraft.regions),
+      dataTypes: csv(scopeDraft.dataTypes),
+      services: scopeDraft.services,
+      applications: scopeDraft.applications,
+      subcontractors: scopeDraft.subcontractors,
+      outOfScope: scopeDraft.outOfScope.trim(),
+      frameworks: regs.length ? regs : ["None"],
+      status: "active",
+    };
+    fd.append("scope", JSON.stringify(scope));
 
     if (isExisting) {
       const agreement = agreementRef.current?.files?.[0];
@@ -467,6 +572,61 @@ export default function Onboard() {
                   </select>
                 </Field>
               </div>
+            </Section>
+
+            {/* Assessment scope — define here (assessor-owned). AI can pre-fill it
+                from a scope sheet or the contract; the assessor reviews/edits. */}
+            <Section
+              title="Assessment scope"
+              aside={
+                <>
+                  <input ref={scopeFileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) autofillScope(file); }} />
+                  <button type="button" onClick={() => scopeFileRef.current?.click()} disabled={scopeAutofilling} className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-semibold text-brand transition hover:bg-brand/10 disabled:opacity-60">
+                    {scopeAutofilling ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}{scopeAutofilling ? "Reading…" : "AI auto-fill"}
+                  </button>
+                </>
+              }
+            >
+              <p className="mb-3 flex items-start gap-2 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2 text-xs text-muted">
+                <Target size={13} className="mt-0.5 shrink-0 text-brand" />
+                Define the scope here, or click <span className="font-semibold text-brand">AI auto-fill</span> to extract it from a scope sheet (Excel) or the contract/MSA. The risk-profile fields above also feed the scope. You can refine the detailed lists later in the console.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Assessment name">
+                  <input value={scopeDraft.name} onChange={(e) => setScope("name", e.target.value)} placeholder="2026 Annual TPRM" className={inputCls} />
+                </Field>
+                <Field label="Assessment type">
+                  <select value={scopeDraft.type} onChange={(e) => setScope("type", e.target.value)} className={inputCls}>
+                    {["Onboarding", "Annual", "Re-assessment", "Ad-hoc"].map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </Field>
+                <Field label="Connectivity / integration">
+                  <select value={scopeDraft.connectivity} onChange={(e) => setScope("connectivity", e.target.value as ScopeDraft["connectivity"])} className={inputCls}>
+                    <option value="">—</option>
+                    <option value="none">None</option>
+                    <option value="api">API</option>
+                    <option value="vpn">VPN</option>
+                    <option value="dedicated">Dedicated link</option>
+                  </select>
+                </Field>
+                <Field label="Data residency / regions">
+                  <input value={scopeDraft.regions} onChange={(e) => setScope("regions", e.target.value)} placeholder="India, Singapore" className={inputCls} />
+                </Field>
+                <Field label="Data types">
+                  <input value={scopeDraft.dataTypes} onChange={(e) => setScope("dataTypes", e.target.value)} placeholder="PII, Cardholder data, KYC" className={inputCls} />
+                </Field>
+                <Field label="Cross-border data transfer">
+                  <label className="flex h-[42px] items-center gap-2 text-sm text-fg">
+                    <input type="checkbox" checked={scopeDraft.crossBorderTransfer} onChange={(e) => setScope("crossBorderTransfer", e.target.checked)} className="accent-brand" />
+                    Data is transferred across borders
+                  </label>
+                </Field>
+              </div>
+              {(scopeDraft.services.length > 0 || scopeDraft.applications.length > 0 || scopeDraft.subcontractors.length > 0) && (
+                <p className="mt-2 text-xs text-muted">
+                  AI extracted: {scopeDraft.services.length} service(s), {scopeDraft.applications.length} application(s), {scopeDraft.subcontractors.length} subcontractor(s) — refine in the console after onboarding.
+                </p>
+              )}
             </Section>
 
             {/* Existing-vendor documents */}
