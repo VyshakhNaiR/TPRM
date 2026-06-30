@@ -7,7 +7,7 @@ import { callLLM, resolveLlm } from "@/lib/adjudicator";
 
 export const runtime = "nodejs";
 
-const COMPLIQ_SYSTEM = `You are CompliQ, a friendly compliance guidance assistant embedded in a TPRM (Third-Party Risk Management) vendor portal.
+const VERA_SYSTEM = `You are Vera (Virtual Evidence & Risk Assistant), a friendly compliance guidance assistant embedded in a TPRM (Third-Party Risk Management) vendor portal.
 Your role is to help vendors understand what evidence they need to satisfy specific security controls.
 Be concise, practical, and clear. Focus on:
 - What specific documents, screenshots, or reports constitute acceptable evidence
@@ -63,12 +63,12 @@ VENDOR QUESTION: ${message.trim()}`;
           model: cfg.model || "claude-haiku-4-5-20251001",
           max_tokens: 512,
           temperature: 0.3,
-          system: COMPLIQ_SYSTEM,
+          system: VERA_SYSTEM,
           messages: msgs,
         });
         reply = (res.content.find((b) => b.type === "text") as any)?.text ?? "";
       } else {
-        reply = await callLLM(kind, cfg, `${COMPLIQ_SYSTEM}\n\n${contextPrompt}`);
+        reply = await callLLM(kind, cfg, `${VERA_SYSTEM}\n\n${contextPrompt}`);
       }
       if (reply.trim()) return NextResponse.json({ reply: reply.trim() });
     } catch {

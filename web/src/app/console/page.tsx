@@ -219,8 +219,8 @@ export default function Console() {
     }
     try {
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker));
-      if (failures === 0) toast.success(`Adjudicated ${pending.length} controls.`);
-      else toast.error(`${failures} of ${pending.length} adjudications failed.`);
+      if (failures === 0) toast.success(`Reviewed ${pending.length} controls.`);
+      else toast.error(`${failures} of ${pending.length} reviews failed.`);
     } finally {
       setRunningAll(false);
     }
@@ -528,7 +528,7 @@ export default function Console() {
           <section className="glass overflow-hidden rounded-2xl mb-6">
             <div className="px-5 py-3 border-b border-border">
               <h3 className="text-sm font-semibold">Activity log</h3>
-              <p className="text-xs text-muted">Overrides, send-backs, adjudications, and logins for this platform.</p>
+              <p className="text-xs text-muted">Overrides, send-backs, reviews, and logins for this platform.</p>
             </div>
             <div className="max-h-[60vh] overflow-y-auto">
               <table className="w-full text-sm">
@@ -767,7 +767,7 @@ export default function Console() {
               </div>
               <h3 className="text-base font-semibold">No submission yet from {selectedVendorName}</h3>
               <p className="mt-1 max-w-sm text-sm text-muted">
-                This vendor has not answered any controls or attached evidence. You can still browse the control library and run AI adjudication once they submit.
+                This vendor has not answered any controls or attached evidence. You can still browse the control library and run an AI review once they submit.
               </p>
             </div>
           )}
@@ -787,7 +787,7 @@ export default function Console() {
                   <div>
                     <span className="font-semibold text-warn">Prior audit: Non-Compliant</span>
                     {selectedPriorNote && <span className="text-fg"> — {selectedPriorNote}</span>}
-                    <span className="text-muted"> Re-verify before adjudicating.</span>
+                    <span className="text-muted"> Re-verify before reviewing.</span>
                   </div>
                 </div>
               )}
@@ -826,7 +826,7 @@ export default function Console() {
                   )}
                 >
                   <Sparkles size={16} />
-                  {scanning[control.id] ? "AI adjudicating evidence…" : "Adjudicate with AI"}
+                  {scanning[control.id] ? "Reviewing evidence…" : "Review with AI"}
                 </button>
               )}
             </div>
@@ -918,7 +918,7 @@ export default function Console() {
                     </button>
                     {review && (
                       <span className={cn("text-[11px] font-medium", review.status === "resubmitted" ? "text-ok" : "text-warn")}>
-                        {review.status === "resubmitted" ? "Vendor has resubmitted — re-adjudicate" : "Returned to vendor — awaiting remediation"}
+                        {review.status === "resubmitted" ? "Vendor has resubmitted — re-review" : "Returned to vendor — awaiting remediation"}
                       </span>
                     )}
                   </div>

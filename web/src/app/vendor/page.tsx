@@ -86,6 +86,13 @@ function isAnswered(a: Answer | undefined, certTypes: Set<CertType>): boolean {
   return !!a.response?.trim() || (a.evidence?.length ?? 0) > 0;
 }
 
+// Quick-prompt chips offered by Vera when a control's chat is first opened.
+const VERA_PROMPTS = [
+  "What evidence satisfies this control?",
+  "What are common reasons this is marked Non-Compliant?",
+  "Show me a strong vs. weak evidence example",
+];
+
 export default function VendorPortal() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -113,7 +120,7 @@ export default function VendorPortal() {
   const scrollRestoreRef = useRef<number | null>(null);
   const toast = useToasts();
 
-  // CompliQ chatbot state
+  // Vera chatbot state
   const [chatOpen, setChatOpen] = useState(false);
   const [chatControlId, setChatControlId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
@@ -200,10 +207,14 @@ export default function VendorPortal() {
     return () => { cancelled = true; };
   }, [router, reloadKey, loadCerts]);
 
-  // Restore scroll position after state updates (prevents page-top-jump on save).
+  // Restore scroll position after state updates (prevents page-top-jump on
+  // save / upload / submit). Re-apply on the next frame too, since framer-motion
+  // animates section heights after layout and would otherwise shift the page.
   useLayoutEffect(() => {
     if (scrollRestoreRef.current !== null) {
-      window.scrollTo(0, scrollRestoreRef.current);
+      const y = scrollRestoreRef.current;
+      window.scrollTo(0, y);
+      requestAnimationFrame(() => window.scrollTo(0, y));
       scrollRestoreRef.current = null;
     }
   });
@@ -316,7 +327,7 @@ export default function VendorPortal() {
     }
   }
 
-  // CompliQ chatbot — ask for guidance on a specific control.
+  // Vera chatbot — ask for guidance on a specific control.
   function openChat(controlId: string) {
     setChatControlId(controlId);
     setChatMessages([]);
@@ -324,9 +335,9 @@ export default function VendorPortal() {
     setChatOpen(true);
   }
 
-  async function sendChat() {
-    if (!chatInput.trim() || !chatControlId || chatLoading) return;
-    const msg = chatInput.trim();
+  async function sendChat(preset?: string) {
+    const msg = (preset ?? chatInput).trim();
+    if (!msg || !chatControlId || chatLoading) return;
     setChatInput("");
     const history = [...chatMessages, { role: "user" as const, content: msg }];
     setChatMessages(history);
@@ -357,6 +368,7 @@ export default function VendorPortal() {
       fd.append("controlId", controlId);
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       if (!res.ok) throw new Error(await errorMessage(res, "Upload failed."));
+      scrollRestoreRef.current = window.scrollY; // keep position (no jump-to-top)
       setSub((await res.json()).submission);
       setIncompleteFlags((m) => {
         if (!m.has(controlId)) return m;
@@ -467,6 +479,7 @@ export default function VendorPortal() {
         }
         throw new Error(await errorMessage(res, "Could not submit for review."));
       }
+      scrollRestoreRef.current = window.scrollY; // keep position (no jump-to-top)
       setSub(await res.json());
       setMissingReasons(new Set());
       setIncompleteFlags(new Set());
@@ -744,10 +757,10 @@ export default function VendorPortal() {
                               </div>
                               <button
                                 onClick={() => openChat(c.id)}
-                                title="Ask CompliQ for evidence guidance"
+                                title="Ask Vera for evidence guidance"
                                 className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-brand/30 bg-brand/5 px-2 py-1.5 text-[11px] font-semibold text-brand hover:bg-brand/10 transition"
                               >
-                                <MessageCircle size={11} /> Ask CompliQ
+                                <MessageCircle size={11} /> Ask Vera
                               </button>
                             </div>
 
@@ -926,7 +939,7 @@ export default function VendorPortal() {
           );
         })}
       </div>
-      {/* CompliQ chat panel — slides in from bottom-right */}
+      {/* Vera chat panel — slides in from bottom-right */}
       <AnimatePresence>
         {chatOpen && (
           <motion.div
@@ -941,19 +954,33 @@ export default function VendorPortal() {
             <div className="flex items-center justify-between gap-2 border-b border-border bg-brand/10 px-4 py-3">
               <div className="flex items-center gap-2">
                 <MessageCircle size={16} className="text-brand" />
-                <span className="text-sm font-semibold text-brand">CompliQ</span>
+                <span className="text-sm font-semibold text-brand">Vera</span>
                 {chatControlId && <span className="rounded-md bg-brand/10 px-1.5 py-0.5 font-mono text-[10px] text-brand">{chatControlId}</span>}
               </div>
-              <button onClick={() => setChatOpen(false)} aria-label="Close CompliQ" className="grid h-7 w-7 place-items-center rounded-lg border border-border text-muted hover:text-fg"><X size={14} /></button>
+              <button onClick={() => setChatOpen(false)} aria-label="Close Vera" className="grid h-7 w-7 place-items-center rounded-lg border border-border text-muted hover:text-fg"><X size={14} /></button>
             </div>
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-3 space-y-3" style={{ minHeight: 180 }}>
               {chatMessages.length === 0 && (
-                <div className="text-center py-6 text-xs text-muted">
-                  <MessageCircle size={24} className="mx-auto mb-2 text-brand/40" />
-                  <p className="font-medium text-fg">Hi! I'm CompliQ.</p>
-                  <p className="mt-1">Ask me what evidence is typically needed for this control and I'll guide you.</p>
+                <div className="py-4 text-xs text-muted">
+                  <div className="text-center">
+                    <MessageCircle size={24} className="mx-auto mb-2 text-brand/40" />
+                    <p className="font-medium text-fg">Hi! I'm Vera.</p>
+                    <p className="mt-1">Your Virtual Evidence &amp; Risk Assistant. Ask me what evidence is typically needed for this control, or pick a prompt below.</p>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-1.5">
+                    {VERA_PROMPTS.map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => sendChat(p)}
+                        disabled={chatLoading}
+                        className="rounded-xl border border-border bg-surface/60 px-3 py-2 text-left text-[11px] text-fg transition hover:border-brand hover:text-brand disabled:opacity-60"
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
               {chatMessages.map((m, i) => (
@@ -989,7 +1016,7 @@ export default function VendorPortal() {
                   className="flex-1 resize-none rounded-xl border border-border bg-surface/60 px-3 py-2 text-xs outline-none focus:border-brand disabled:opacity-60"
                 />
                 <button
-                  onClick={sendChat}
+                  onClick={() => sendChat()}
                   disabled={chatLoading || !chatInput.trim()}
                   className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand text-white shadow-glow-sm transition hover:brightness-110 disabled:opacity-60"
                 >
