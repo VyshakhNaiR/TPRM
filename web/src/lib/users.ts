@@ -46,6 +46,7 @@ export interface VendorProfile {
   tprmInitiatedAt?: string; // ISO; when the assessment was initiated
   agreementFile?: UploadRef; // existing vendors: contract/MSA
   lastAuditFile?: UploadRef; // existing vendors: last TPRM audit report
+  scopeDocFile?: UploadRef; // assessment-scope source document (used to auto-fill the scope)
   onboardedBy?: string; // assessor username who created the vendor
   assignedAssessor?: string; // assessor username this vendor is assigned to (Root assigns)
   // ---- Scope definition (Phase B / Phase 4 — assessor-defined) ----

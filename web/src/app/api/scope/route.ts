@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
   const base = emptyScope(profile.regulators ?? ["None"]);
   const scope = profile.assessmentScope ? { ...base, ...profile.assessmentScope } : base;
   const requests = profile.scopeChangeRequests ?? [];
-  return NextResponse.json({ scope, requests });
+  return NextResponse.json({ scope, requests, scopeDoc: profile.scopeDocFile ?? null });
 }
 
 // PUT — ASSESSOR/root defines or replaces the scope (versioned + audited).

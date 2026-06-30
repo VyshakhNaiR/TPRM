@@ -127,6 +127,7 @@ export default function Onboard() {
 
   const agreementRef = useRef<HTMLInputElement>(null);
   const lastAuditRef = useRef<HTMLInputElement>(null);
+  const scopeDocRef = useRef<HTMLInputElement>(null); // dedicated scope document (stored + auto-fills)
   const formRef = useRef<HTMLFormElement>(null);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((s) => ({ ...s, [k]: v }));
@@ -239,6 +240,7 @@ export default function Onboard() {
     if (agreementRef.current) agreementRef.current.value = "";
     if (lastAuditRef.current) lastAuditRef.current.value = "";
     if (scopeFileRef.current) scopeFileRef.current.value = "";
+    if (scopeDocRef.current) scopeDocRef.current.value = "";
   }
 
   async function submit(e: React.FormEvent) {
@@ -301,6 +303,10 @@ export default function Onboard() {
       status: "active",
     };
     fd.append("scope", JSON.stringify(scope));
+
+    // Assessment-scope document — stored on the vendor for any engagement type.
+    const scopeDoc = scopeDocRef.current?.files?.[0];
+    if (scopeDoc) fd.append("scopeDoc", scopeDoc);
 
     if (isExisting) {
       const agreement = agreementRef.current?.files?.[0];
@@ -653,18 +659,24 @@ export default function Onboard() {
               )}
             </Section>
 
-            {/* Existing-vendor documents */}
-            {isExisting && (
-              <Section title="Existing-vendor documents">
-                <p className="mb-3 rounded-xl border border-mas/40 bg-mas/10 px-3 py-2 text-xs text-mas">
-                  The last audit report is parsed to pre-flag previously non-compliant requirements.
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <FileField label="Agreement / Contract / MSA" inputRef={agreementRef} />
-                  <FileField label="Last TPRM audit report" inputRef={lastAuditRef} />
-                </div>
-              </Section>
-            )}
+            {/* Documents — the assessment-scope document is stored on the vendor and
+                used to auto-fill the scope; contract & audit apply to existing vendors. */}
+            <Section title="Documents">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FileField
+                  label="Assessment scope document"
+                  inputRef={scopeDocRef}
+                  accept=".xlsx,.xls,.csv,.pdf,.docx,.txt"
+                  busy={scopeAutofilling}
+                  onChange={(file) => { if (file) autofillScope(file); }}
+                  help="Excel / PDF / Word. Stored on the vendor and auto-fills the scope fields above (review before submitting)."
+                />
+                {isExisting && <FileField label="Agreement / Contract / MSA" inputRef={agreementRef} help="Stored with the vendor record." />}
+                {isExisting && (
+                  <FileField label="Last TPRM audit report" inputRef={lastAuditRef} help="Parsed to pre-flag previously non-compliant requirements." />
+                )}
+              </div>
+            </Section>
 
             <button
               disabled={busy}
@@ -789,18 +801,27 @@ function RadioCard({
   );
 }
 
-function FileField({ label, inputRef }: { label: string; inputRef: React.RefObject<HTMLInputElement | null> }) {
+function FileField({ label, inputRef, accept = ".pdf,.doc,.docx,.txt,image/*", help, onChange, busy }: {
+  label: string;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  accept?: string;
+  help?: React.ReactNode;
+  onChange?: (file: File | null) => void;
+  busy?: boolean;
+}) {
   return (
     <label className="block text-xs">
       <span className="mb-1 flex items-center gap-1.5 font-medium text-fg">
-        <FileText size={13} /> {label}
+        {busy ? <Loader2 size={13} className="animate-spin text-brand" /> : <FileText size={13} />} {label}
       </span>
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,.doc,.docx,.txt,image/*"
+        accept={accept}
+        onChange={(e) => onChange?.(e.target.files?.[0] ?? null)}
         className="block w-full cursor-pointer rounded-xl border border-border bg-surface/60 px-3 py-2 text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-brand/15 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-brand hover:file:brightness-110"
       />
+      {help && <span className="mt-1 block text-[11px] text-muted">{help}</span>}
     </label>
   );
 }

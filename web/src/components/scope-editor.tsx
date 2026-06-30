@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Plus, Trash2, Save, CheckCircle2, XCircle, Clock, Sparkles } from "lucide-react";
+import { Loader2, Plus, Trash2, Save, CheckCircle2, XCircle, Clock, Sparkles, FileText } from "lucide-react";
 import { errorMessage, useToasts, Toaster } from "@/components/ui";
 import type { AssessmentScope, ScopeChangeRequest } from "@/lib/users";
 import { cn } from "@/lib/utils";
@@ -63,6 +63,7 @@ export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendor
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [scopeDoc, setScopeDoc] = useState<{ filename: string } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
@@ -73,6 +74,7 @@ export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendor
         const d = await r.json();
         setScope({ ...empty(), ...d.scope });
         setRequests(d.requests ?? []);
+        setScopeDoc(d.scopeDoc ?? null);
       }
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [vendorId]);
@@ -175,7 +177,7 @@ export function ScopeEditor({ vendorId, vendorName }: { vendorId: string; vendor
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3">
           <div>
             <h3 className="text-sm font-semibold">Assessment scope — {vendorName}</h3>
-            <p className="text-xs text-muted">Assessor-defined. Vendors view this read-only and must request changes. <span className="font-medium text-fg">v{scope.version}</span> · <span className={cn("font-medium", scope.status === "active" ? "text-ok" : "text-muted")}>{scope.status}</span></p>
+            <p className="text-xs text-muted">Assessor-defined. Vendors view this read-only and must request changes. <span className="font-medium text-fg">v{scope.version}</span> · <span className={cn("font-medium", scope.status === "active" ? "text-ok" : "text-muted")}>{scope.status}</span>{scopeDoc && <span> · <span className="inline-flex items-center gap-1 text-brand"><FileText size={11} /> {scopeDoc.filename}</span></span>}</p>
           </div>
           <div className="flex items-center gap-2">
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) autofill(f); }} />

@@ -78,6 +78,19 @@ export async function POST(req: NextRequest) {
     } catch { /* scope is best-effort at onboarding; assessor can set it later */ }
   }
 
+  // Assessment-scope source document — stored on the vendor for any engagement
+  // type (spreadsheet types allowed here since the assessor uploads it).
+  const SCOPE_DOC_EXT = new Set(["xlsx", "xls", "csv", "pdf", "docx", "txt", "md"]);
+  const sdoc = form.get("scopeDoc") as File | null;
+  if (sdoc) {
+    const bytes = Buffer.from(await sdoc.arrayBuffer());
+    const ext = (sdoc.name.split(".").pop() || "").toLowerCase();
+    if (bytes.length > 0 && bytes.length <= MAX_BYTES && SCOPE_DOC_EXT.has(ext)) {
+      const ref = await saveUpload(`${vendorId}/onboarding`, sdoc.name, bytes);
+      await updateVendorProfile(vendorId, { scopeDocFile: ref });
+    }
+  }
+
   // Existing vendor: store agreement + last audit report; seed prior-findings.
   let priorCount = 0;
   if (engagementType === "existing") {
