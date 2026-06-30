@@ -10,6 +10,7 @@ import type { CertType, CoverageMode, Submission, VendorCert } from "@/lib/store
 import { LogoLockup } from "@/components/animated-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ErrorState, Toaster, errorMessage, useToasts } from "@/components/ui";
+import { VendorScope } from "@/components/vendor-scope";
 
 function CompletionRing({ pct }: { pct: number }) {
   const r = 26;
@@ -591,6 +592,9 @@ export default function VendorPortal() {
           </button>
         </div>
       </section>
+
+      {/* Assessment scope — assessor-defined, read-only, with request-change flow */}
+      <VendorScope />
 
       {/* Baseline questionnaire banner — vendors with no specific regulatory scope */}
       {questionnaireMode === "hygiene" && (

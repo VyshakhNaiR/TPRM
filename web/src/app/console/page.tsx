@@ -24,6 +24,7 @@ import {
   Users,
   UserPlus,
   Star,
+  Target,
 } from "lucide-react";
 import { CONTROLS, FRAMEWORKS, VENDOR } from "@/data/seed";
 import { BASELINE_CONTROLS } from "@/data/baseline";
@@ -35,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { consolidatedRating } from "@/lib/risk";
 import type { VendorContact } from "@/lib/users";
 import { type VendorReport, exportReportExcel, openReportPrint } from "@/lib/report";
+import { ScopeEditor } from "@/components/scope-editor";
 
 export default function Console() {
   const router = useRouter();
@@ -65,7 +67,7 @@ export default function Console() {
 
   // Audit log for assessors.
   const [auditEntries, setAuditEntries] = useState<any[]>([]);
-  const [consoleTab, setConsoleTab] = useState<"controls" | "contacts" | "audit">("controls");
+  const [consoleTab, setConsoleTab] = useState<"controls" | "scope" | "contacts" | "audit">("controls");
 
   // Vendor contacts / SPOCs (assessor can add additional login accounts).
   const [contacts, setContacts] = useState<VendorContact[]>([]);
@@ -84,6 +86,7 @@ export default function Console() {
 
   // Override form (per-control verdict override).
   const [vendorScope, setVendorScope] = useState<{ assets: any[]; applications: any[]; services: any[] } | null>(null);
+  const [scopePending, setScopePending] = useState(0);
 
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [ovVerdict, setOvVerdict] = useState<Verdict>("Compliant");
@@ -122,7 +125,7 @@ export default function Console() {
         if (cancelled) return;
         setSubmission(r.ok ? await r.json() : null);
         setResults({});
-        try { const sc = await fetch(`/api/scope?vendorId=${encodeURIComponent(vendorId)}`); if (sc.ok && !cancelled) setVendorScope((await sc.json()).scope); } catch {}
+        try { const sc = await fetch(`/api/scope?vendorId=${encodeURIComponent(vendorId)}`); if (sc.ok && !cancelled) { const d = await sc.json(); setVendorScope(d.scope); setScopePending((d.requests ?? []).filter((q: any) => q.status === "pending").length); } } catch {}
       } catch {
         if (!cancelled) { setSubmission(null); setResults({}); }
       }
@@ -581,9 +584,17 @@ export default function Console() {
         {/* Tab bar: Controls | Audit log */}
         <div className="mb-5 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
           <button onClick={() => setConsoleTab("controls")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "controls" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><Sparkles size={15} /> Controls</button>
+          <button onClick={() => setConsoleTab("scope")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "scope" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><Target size={15} /> Scope{scopePending > 0 && <span className="rounded-md bg-warn/20 px-1.5 text-[10px] text-warn">{scopePending}</span>}</button>
           <button onClick={() => setConsoleTab("contacts")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "contacts" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><Users size={15} /> Contacts{contacts.length > 0 && <span className="rounded-md bg-surface-2 px-1.5 text-[10px]">{contacts.length}</span>}</button>
           <button onClick={() => setConsoleTab("audit")} className={cn("inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition", consoleTab === "audit" ? "border-brand/50 bg-brand/10 text-fg" : "border-border text-muted hover:text-fg")}><ScrollText size={15} /> Audit log</button>
         </div>
+
+        {/* Scope tab — assessor-defined scope + change-request review */}
+        {consoleTab === "scope" && (
+          <div className="mb-6">
+            <ScopeEditor key={vendorId} vendorId={vendorId} vendorName={selectedVendorName} />
+          </div>
+        )}
 
         {/* Contacts / SPOCs tab */}
         {consoleTab === "contacts" && (

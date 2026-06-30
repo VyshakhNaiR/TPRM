@@ -32,11 +32,49 @@ export interface VendorProfile {
   agreementFile?: UploadRef; // existing vendors: contract/MSA
   lastAuditFile?: UploadRef; // existing vendors: last TPRM audit report
   onboardedBy?: string; // assessor username who created the vendor
-  // ---- Scope definition (Phase B) ----
-  assessmentScope?: {
-    assets: { name: string; type: string; description: string }[];
-    applications: { name: string; url: string; description: string }[];
-    services: { name: string; description: string }[];
+  // ---- Scope definition (Phase B / Phase 4 — assessor-defined) ----
+  assessmentScope?: AssessmentScope;
+  scopeChangeRequests?: ScopeChangeRequest[];
+}
+
+// The assessment scope is OWNED BY THE ASSESSOR. Vendors view it read-only and
+// must file a change request to alter it (versioned + audited).
+export interface AssessmentScope {
+  name?: string; // assessment name
+  type?: string; // Onboarding / Annual / Re-assessment / Ad-hoc
+  periodStart?: string; // ISO date
+  periodEnd?: string; // ISO date
+  services: { name: string; description?: string }[];
+  applications: { name: string; url?: string; description?: string }[];
+  hostingModel?: "on_prem" | "cloud" | "hybrid";
+  cloudProvider?: string;
+  regions: string[];
+  dataTypes: string[];
+  assets: { name: string; type?: string; description?: string }[]; // critical assets
+  subcontractors: { name: string; service?: string }[];
+  frameworks: string[]; // drives the questionnaire (RBI / MAS / SEBI / None)
+  outOfScope?: string;
+  status: "draft" | "active";
+  version: number;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface ScopeChangeRequest {
+  id: string;
+  requestedBy: string; // vendor username
+  justification: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNote?: string;
+}
+
+export function emptyScope(frameworks: string[] = []): AssessmentScope {
+  return {
+    services: [], applications: [], regions: [], dataTypes: [], assets: [], subcontractors: [],
+    frameworks, status: "draft", version: 1,
   };
 }
 export interface StoredUser {
@@ -187,6 +225,73 @@ export function updateVendorProfile(vendorId: string, patch: Partial<VendorProfi
     all[entry.username] = entry;
     writeAll(all);
     return true;
+  });
+}
+
+// Assessor sets/replaces a vendor's assessment scope. Bumps the version, stamps
+// who/when, and keeps profile.regulators in sync (frameworks drive the
+// questionnaire via lib/scope). Returns the persisted scope, or null if no vendor.
+export function setAssessmentScope(vendorId: string, scope: AssessmentScope, actor: string): Promise<AssessmentScope | null> {
+  return withLock("users", () => {
+    const all = readAll();
+    const entry = Object.values(all).find((u) => u.vendorId === vendorId);
+    if (!entry) return null;
+    const prev = entry.profile.assessmentScope;
+    const next: AssessmentScope = {
+      ...scope,
+      version: (prev?.version ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor,
+    };
+    entry.profile.assessmentScope = next;
+    // Keep the regulator-driven questionnaire selection consistent with scope.
+    entry.profile.regulators = next.frameworks;
+    all[entry.username] = entry;
+    writeAll(all);
+    return next;
+  });
+}
+
+// Vendor files a scope-change request (justification only — the assessor edits
+// the actual scope on approval). Returns the created request, or null if no vendor.
+export function addScopeChangeRequest(vendorId: string, requestedBy: string, justification: string): Promise<ScopeChangeRequest | null> {
+  return withLock("users", () => {
+    const all = readAll();
+    const entry = Object.values(all).find((u) => u.vendorId === vendorId);
+    if (!entry) return null;
+    const req: ScopeChangeRequest = {
+      id: crypto.randomBytes(8).toString("hex"),
+      requestedBy,
+      justification: justification.slice(0, 2000),
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+    const list = entry.profile.scopeChangeRequests ?? [];
+    entry.profile.scopeChangeRequests = [req, ...list].slice(0, 100);
+    all[entry.username] = entry;
+    writeAll(all);
+    return req;
+  });
+}
+
+// Assessor approves/rejects a pending scope-change request.
+export function decideScopeChangeRequest(
+  vendorId: string, requestId: string, decision: "approved" | "rejected", decidedBy: string, note?: string
+): Promise<ScopeChangeRequest | null> {
+  return withLock("users", () => {
+    const all = readAll();
+    const entry = Object.values(all).find((u) => u.vendorId === vendorId);
+    if (!entry) return null;
+    const list = entry.profile.scopeChangeRequests ?? [];
+    const req = list.find((r) => r.id === requestId);
+    if (!req || req.status !== "pending") return null;
+    req.status = decision;
+    req.decidedBy = decidedBy;
+    req.decidedAt = new Date().toISOString();
+    if (note) req.decisionNote = note.slice(0, 1000);
+    all[entry.username] = entry;
+    writeAll(all);
+    return req;
   });
 }
 
