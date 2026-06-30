@@ -26,6 +26,10 @@ export interface VendorReport {
   summary: { assessed: number; compliant: number; nc: number; na: number; posture: number };
   rating: { rating: string; risk: string; approval: string };
   controls: ReportControl[];
+  // When set, the PDF is stamped CONFIDENTIAL with a distribution-control note.
+  // (Browser print can't encrypt; true password protection is applied by the
+  // document-management layer on distribution.)
+  confidential?: boolean;
 }
 
 function esc(s: unknown): string {
@@ -94,9 +98,15 @@ export function reportHtml(r: VendorReport): string {
   ul { margin: 6px 0 0; padding-left: 16px; }
   .override { margin-top: 6px; padding: 6px 8px; border-left: 3px solid #7c3aed; background: #f5f3ff; border-radius: 4px; font-size: 11px; }
   .footer { margin-top: 28px; color: #9ca3af; font-size: 11px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+  .confidential-bar { display: inline-block; margin-bottom: 10px; padding: 3px 10px; border-radius: 6px; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+  .watermark { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 0; }
+  .watermark span { font-size: 120px; font-weight: 800; color: rgba(220,38,38,0.06); transform: rotate(-30deg); white-space: nowrap; }
+  body > *:not(.watermark) { position: relative; z-index: 1; }
   @media print { body { margin: 12mm; } h2 { page-break-after: avoid; } tr { page-break-inside: avoid; } }
 </style></head>
 <body onload="window.print()">
+  ${r.confidential ? `<div class="watermark"><span>CONFIDENTIAL</span></div>` : ""}
+  ${r.confidential ? `<div class="confidential-bar">CONFIDENTIAL — RESTRICTED DISTRIBUTION</div><br/>` : ""}
   <h1>${esc(r.vendorName)}</h1>
   <div class="sub">Third-Party Risk Assessment Report · Generated ${esc(r.generatedAt)}</div>
 
@@ -127,7 +137,7 @@ export function reportHtml(r: VendorReport): string {
     <tbody>${rows || `<tr><td colspan="5" class="muted">No controls assessed.</td></tr>`}</tbody>
   </table>
 
-  <div class="footer">This report reflects the assessment state at generation time. Assessor overrides are the final authority on any control verdict.</div>
+  <div class="footer">This report reflects the assessment state at generation time. Assessor overrides are the final authority on any control verdict.${r.confidential ? " This document is marked CONFIDENTIAL — apply password protection / access controls before distributing externally." : ""}</div>
 </body></html>`;
 }
 

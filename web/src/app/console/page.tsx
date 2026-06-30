@@ -87,6 +87,7 @@ export default function Console() {
   // Override form (per-control verdict override).
   const [vendorScope, setVendorScope] = useState<{ assets: any[]; applications: any[]; services: any[] } | null>(null);
   const [scopePending, setScopePending] = useState(0);
+  const [confidentialPdf, setConfidentialPdf] = useState(true);
 
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [ovVerdict, setOvVerdict] = useState<Verdict>("Compliant");
@@ -390,6 +391,7 @@ export default function Console() {
       profile: profile ?? null,
       summary: { assessed: summary.assessed, compliant: summary.compliant, nc: summary.nc, na: summary.na, posture: summary.posture },
       rating: consolidatedRating(Object.values(results).filter((r) => r.verdict === "Non-Compliant").map((r) => r.risk)),
+      confidential: confidentialPdf,
       controls: controls.map((c) => {
         const r = results[c.id];
         const ans = submission?.answers?.[c.id];
@@ -550,6 +552,10 @@ export default function Console() {
                 <option key={v.vendorId} value={v.vendorId}>{v.name} ({v.answered}/{v.total})</option>
               ))}
             </select>
+            <label className="hidden items-center gap-1.5 text-xs text-muted lg:flex" title="Stamp the PDF CONFIDENTIAL and remind to password-protect before external sharing">
+              <input type="checkbox" checked={confidentialPdf} onChange={(e) => setConfidentialPdf(e.target.checked)} className="accent-brand" />
+              Confidential
+            </label>
             <div className="inline-flex overflow-hidden rounded-xl border border-border">
               <button
                 onClick={exportVendorPdf}

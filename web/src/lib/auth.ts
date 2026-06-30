@@ -60,6 +60,14 @@ export const USERS: Record<string, { password: string; session: Session }> = {
   customer: { password: "demo", session: { username: "customer", role: "customer", name: "Customer (Bank Stakeholder)" } },
 };
 
+// Roster of assessor accounts (for Root's vendor→assessor assignment). PRODUCTION:
+// source this from the DB/IdP. Demo: derive from the seeded USERS above.
+export function assessorRoster(): { username: string; name: string }[] {
+  return Object.values(USERS)
+    .filter((u) => u.session.role === "assessor")
+    .map((u) => ({ username: u.session.username, name: u.session.name }));
+}
+
 export const LANDING: Record<Role, string> = {
   root: "/admin",
   customer: "/customer",

@@ -41,6 +41,9 @@ export default function Admin() {
   const [addUserFor, setAddUserFor] = useState<{ vendorId: string; name: string } | null>(null);
   const [addUserForm, setAddUserForm] = useState({ email: "", password: "", displayName: "" });
   const [addUserSaving, setAddUserSaving] = useState(false);
+  // Vendor → assessor assignment (Root only).
+  const [assessors, setAssessors] = useState<{ username: string; name: string }[]>([]);
+  const [assignments, setAssignments] = useState<Record<string, string>>({}); // vendorId → assessor
   const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const toast = useToasts();
@@ -71,6 +74,14 @@ export default function Admin() {
         });
         const usersRes = await fetch("/api/users");
         if (usersRes.ok && !cancelled) setUsers((await usersRes.json()).users);
+        try { const ar = await fetch("/api/assign"); if (ar.ok && !cancelled) setAssessors((await ar.json()).assessors ?? []); } catch {}
+        try {
+          const vr = await fetch("/api/vendors");
+          if (vr.ok && !cancelled) {
+            const vs = (await vr.json()).vendors ?? [];
+            setAssignments(Object.fromEntries(vs.map((v: any) => [v.vendorId, v.assignedAssessor || ""])));
+          }
+        } catch {}
         try { const e = await fetch("/api/eval"); if (e.ok && !cancelled) setEvalData(await e.json()); } catch {}
         try { const a = await fetch("/api/audit"); if (a.ok && !cancelled) setAuditEntries((await a.json()).entries); } catch {}
       } catch (e) {
@@ -91,6 +102,23 @@ export default function Admin() {
       toast.success("Invite link generated.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not create the invite.");
+    }
+  }
+
+  async function assignVendor(vendorId: string, assessor: string) {
+    const prev = assignments[vendorId] ?? "";
+    setAssignments((a) => ({ ...a, [vendorId]: assessor })); // optimistic
+    try {
+      const res = await fetch("/api/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vendorId, assessor }),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, "Could not update the assignment."));
+      toast.success(assessor ? "Vendor assigned." : "Assignment cleared.");
+    } catch (e) {
+      setAssignments((a) => ({ ...a, [vendorId]: prev })); // rollback
+      toast.error(e instanceof Error ? e.message : "Could not update the assignment.");
     }
   }
 
@@ -318,7 +346,7 @@ export default function Admin() {
         <>
         <section className="glass overflow-hidden rounded-2xl mb-4">
           <table className="w-full text-sm">
-            <thead className="border-b border-border text-left text-xs uppercase tracking-wider text-muted"><tr><th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Scope / Activity</th>{canManage && <th className="px-4 py-3"></th>}</tr></thead>
+            <thead className="border-b border-border text-left text-xs uppercase tracking-wider text-muted"><tr><th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Scope / Activity</th>{canManage && <th className="px-4 py-3 text-right">Assessor / actions</th>}</tr></thead>
             <tbody>
               {users.map((u) => (
                 <tr key={u.username} className="border-b border-border/60 last:border-0">
@@ -328,13 +356,24 @@ export default function Admin() {
                   {canManage && (
                     <td className="px-4 py-3">
                       {u.role === "vendor" && u.vendorId && (
-                        <button
-                          onClick={() => { setAddUserFor({ vendorId: u.vendorId, name: u.name }); setAddUserForm({ email: "", password: "", displayName: "" }); }}
-                          title="Add another login for this vendor"
-                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-muted hover:border-brand/50 hover:text-fg"
-                        >
-                          <UserCog size={12} /> Add user
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <select
+                            value={assignments[u.vendorId] ?? ""}
+                            onChange={(e) => assignVendor(u.vendorId, e.target.value)}
+                            title="Assign this vendor to an assessor"
+                            className="rounded-lg border border-border bg-surface/60 px-2 py-1 text-[11px] outline-none focus:border-brand"
+                          >
+                            <option value="">Unassigned</option>
+                            {assessors.map((a) => <option key={a.username} value={a.username}>{a.name}</option>)}
+                          </select>
+                          <button
+                            onClick={() => { setAddUserFor({ vendorId: u.vendorId, name: u.name }); setAddUserForm({ email: "", password: "", displayName: "" }); }}
+                            title="Add another login for this vendor"
+                            className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-muted hover:border-brand/50 hover:text-fg"
+                          >
+                            <UserCog size={12} /> Add user
+                          </button>
+                        </div>
                       )}
                     </td>
                   )}

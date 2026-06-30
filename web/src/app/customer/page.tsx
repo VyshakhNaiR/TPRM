@@ -688,6 +688,7 @@ export default function CustomerPortfolio() {
         posture: d.vendor.posture,
       },
       rating: d.rating,
+      confidential: true,
       controls: d.controls.map((c) => ({
         id: c.id,
         family: c.family,

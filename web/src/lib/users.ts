@@ -32,6 +32,7 @@ export interface VendorProfile {
   agreementFile?: UploadRef; // existing vendors: contract/MSA
   lastAuditFile?: UploadRef; // existing vendors: last TPRM audit report
   onboardedBy?: string; // assessor username who created the vendor
+  assignedAssessor?: string; // assessor username this vendor is assigned to (Root assigns)
   // ---- Scope definition (Phase B / Phase 4 — assessor-defined) ----
   assessmentScope?: AssessmentScope;
   scopeChangeRequests?: ScopeChangeRequest[];
@@ -304,6 +305,19 @@ export function setVendorTier(vendorId: string, tier: string): Promise<boolean> 
     if (!entry) return false;
     entry.profile.tier = tier;
     entry.profile.tierSelfDeclared = false;
+    all[entry.username] = entry;
+    writeAll(all);
+    return true;
+  });
+}
+
+// Root assigns a vendor to an assessor (or clears with "" ). Returns false if no vendor.
+export function assignVendorToAssessor(vendorId: string, assessor: string): Promise<boolean> {
+  return withLock("users", () => {
+    const all = readAll();
+    const entry = Object.values(all).find((u) => u.vendorId === vendorId);
+    if (!entry) return false;
+    entry.profile.assignedAssessor = assessor || undefined;
     all[entry.username] = entry;
     writeAll(all);
     return true;
